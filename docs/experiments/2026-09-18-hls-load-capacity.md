@@ -1131,3 +1131,250 @@ At 100 concurrent synthetic HLS consumers after the mode-10 correction:
 - worst load-shard continuity remained below 7 seconds.
 
 Because internal Mist session coalescence was still observed, Phase 2 is considered a successful serving-capacity fix but not the final viewer-identity validation.
+
+
+---
+
+# Experiment KZV2-DUAL-001 — Two simultaneous source channels, small load
+
+**Date:** 2026-09-18  
+**Status:** Complete; provider concurrency limit identified  
+**Code under test:** `2a10dbf97c85a3b8557fa313aeedfef40eda2bac`
+
+## Research question
+
+Can the V2 relay and MistServer ingest two distinct IPTV channels at the same time, keep exactly one relay pull per channel, and serve five HLS viewers on each channel without cross-channel interference?
+
+## Sources
+
+The live provider catalogue was checked immediately before the experiment.
+
+| Logical V2 id | Provider stream id | Live catalogue name |
+|---|---:|---|
+| `bein-1` | 3974 | `ON E [EG]` |
+| `bein-2` | 2454 | `beIN Sport 2 HD Q` |
+
+The logical id `bein-1` is therefore only a stale V2 test alias; it does not describe the provider content carried by stream 3974.
+
+## Relay preparation
+
+The pre-experiment relay allowed only one configured stream id and one active pull globally. That would have rejected a two-channel experiment before the provider or MistServer was tested.
+
+### RED
+
+Commit:
+
+`7247c18bfbf52d0cb8f58fc64dd3800ee994fef8`  
+`test: require independent multi-channel relay pulls`
+
+The new test required:
+
+- configured allowlist `3974,2454`;
+- one simultaneous pull for each distinct stream;
+- duplicate pull of the same stream rejected;
+- per-stream counters;
+- unlisted stream ids rejected.
+
+Observed RED result:
+
+```text
+404 !== 200
+```
+
+The second distinct stream was rejected by the old single-stream implementation.
+
+### GREEN
+
+Commit:
+
+`2a10dbf97c85a3b8557fa313aeedfef40eda2bac`  
+`feat: isolate relay pulls per IPTV channel`
+
+The relay now:
+
+- maintains a configured stream-id allowlist;
+- maintains an independent active-pull lock for each stream;
+- allows distinct streams concurrently;
+- still rejects duplicate pulls of the same stream;
+- exposes aggregate and per-stream provider counters.
+
+Verification:
+
+- **112 tests passed**
+- **0 failed**
+
+## Pre-run baseline
+
+Immediately before launching the two load shards, relay state was:
+
+### Stream 3974
+
+- active pulls: 1
+- total pulls: 3
+- provider attempts: 3
+- successful provider opens: 1
+- failed provider opens: 2
+- rejected concurrent pulls: 0
+
+The two failed opens were cold-start attempts from before the controlled run.
+
+### Stream 2454
+
+All counters were zero.
+
+Thus the experiment began with channel A already established and channel B never yet pulled by the new relay process.
+
+## Load protocol
+
+Two independent load-generator services were used.
+
+Each channel:
+
+- viewers: **5**
+- duration: **60,000 ms**
+- join mode: **steady**
+- join spread: **15,000 ms**
+- start delay: **3,000 ms**
+
+Runs:
+
+- channel A: `dual5-a`, began 2026-09-18 15:17:47 UTC
+- channel B: `dual5-b`, began 2026-09-18 15:17:45 UTC
+
+The starts were approximately 1.9 seconds apart.
+
+## Direct evidence that V2 can hold two distinct pulls
+
+During overlap, the monitor recorded:
+
+```text
+activePulls = 2
+3974.activePulls = 1
+2454.activePulls = 1
+```
+
+At that observation:
+
+- the relay had one active provider response for each distinct stream;
+- per-stream duplicate rejection counters were still zero.
+
+Therefore the per-channel relay lock itself successfully permitted two distinct upstream sources simultaneously.
+
+## Provider account constraint
+
+During the same experiment the provider account status reported:
+
+- authentication: 1
+- status: `Active`
+- **maxConnections: 1**
+- activeConnections: 1
+- allowed formats: `m3u8`, `ts`
+
+This provider-side limit is lower than the two simultaneous source connections requested by the experiment.
+
+## Source behavior under two-channel contention
+
+After channel B was introduced, both source inputs repeatedly closed and reopened instead of remaining established.
+
+By the post-run monitor sample, aggregate relay counters had reached:
+
+- provider attempts: 36
+- successful provider opens: 11
+- failed provider opens: 25
+- rejected concurrent relay pulls: 4
+- active pulls: 1
+
+Per-stream:
+
+### 2454
+
+- active pulls: 0
+- total pulls: 15
+- provider attempts: 15
+- successful opens: 5
+- failed opens: 10
+- rejected concurrent relay pulls: 0
+- real bytes: 41,044,620
+
+### 3974
+
+- active pulls: 1
+- total pulls: 21
+- provider attempts: 21
+- successful opens: 6
+- failed opens: 15
+- rejected concurrent relay pulls: 4
+- real bytes: 105,423,908
+
+Relay logs showed alternating successful opens of 2454 and 3974 during this period, while Mist input sessions repeatedly ended. This behavior is consistent with contention against the provider account's one-connection limit.
+
+## Viewer results
+
+### Channel A — `dual5-a`
+
+| Metric | Result |
+|---|---:|
+| viewers | 5 |
+| harness good | 0 / 5 |
+| root failures | 0 |
+| playlist successes | 73 |
+| playlist failures | 16 |
+| segment successes | 150 |
+| segment failures | 0 |
+| bytes | 63,171,196 |
+| p50 first segment | 591 ms |
+| p95 first segment | 2,366 ms |
+| p95 maximum gap | 15,195 ms |
+| maximum gap | 15,490 ms |
+| p95 playlist request | 5,138 ms |
+| p95 segment request | 4,115 ms |
+| maximum final segment age | 16,374 ms |
+
+Channel A continued transferring media, but continuity deteriorated substantially compared with the healthy single-channel baseline.
+
+### Channel B — `dual5-b`
+
+| Metric | Result |
+|---|---:|
+| viewers | 5 |
+| harness good | 0 / 5 |
+| root failures | 30 |
+| playlist successes | 0 |
+| playlist failures | 0 |
+| segment successes | 0 |
+| segment failures | 0 |
+| bytes | 0 |
+
+Channel B never reached a playable HLS root during the controlled load interval.
+
+## MistServer evidence
+
+During the experiment MistServer emitted multiple `bein-2` failures of the form:
+
+```text
+FAIL: Could not connect to stream
+```
+
+The sampled test window contained 22 FAIL-level log events associated with the inability to maintain the second stream.
+
+Mist CPU and memory were not near Railway service limits, so this experiment does not indicate compute exhaustion as the cause.
+
+## Interpretation
+
+Two separate claims are distinguished:
+
+1. **V2 relay concurrency works.** The relay demonstrably held two active pulls at the same time, one for stream 3974 and one for stream 2454.
+2. **This provider account cannot sustain two source channels simultaneously.** Its own account metadata reports `maxConnections = 1`, and the two-channel experiment produced source reopen churn, loss of continuity on channel A, and no playable HLS on channel B.
+
+Therefore the failed 5+5 viewer outcome is **not evidence that V2 cannot fan out two channels**. It is evidence that this particular provider line is constrained to one simultaneous source connection.
+
+To validate two-channel V2 serving independently of this constraint, the source layer would need either:
+
+- one provider account permitting at least two concurrent source connections; or
+- independent authorized source accounts/lines for the two channels.
+
+## Conclusion
+
+The small two-channel experiment correctly stopped escalation.
+
+The system should **not** proceed to 50+50 or 100+100 using this one-connection provider account, because the source constraint is already binding at 5+5. Single-channel fan-out remains the valid configuration for subsequent viewer-session/token testing.
