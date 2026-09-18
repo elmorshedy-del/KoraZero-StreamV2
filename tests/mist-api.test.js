@@ -190,3 +190,40 @@ test('Mist API nukeStream performs a targeted hard reset without deleting config
 
   assert.deepEqual(commandFrom(transport.calls[0]), { nuke_stream: 'test-ts' });
 });
+
+
+test('Mist API ensures viewer sessions use stream plus stable token without viewer IP', async () => {
+  const calls = [];
+  const fetchFn = async (_url, options) => {
+    const command = JSON.parse(new URLSearchParams(options.body).get('command'));
+    calls.push(command);
+    if (command.config_backup) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { config_backup: { config: { sessionViewerMode: 14 } } };
+        },
+      };
+    }
+    return { ok: true, status: 200, async json() { return {}; } };
+  };
+  const mist = createMistApi({ fetchFn });
+  const result = await mist.ensureViewerSessionMode({ mode: 10 });
+  assert.deepEqual(calls, [
+    { config_backup: true },
+    { config: { sessionViewerMode: 10 } },
+  ]);
+  assert.deepEqual(result, { changed: true, previousMode: 14, mode: 10 });
+});
+
+test('Mist API leaves viewer session mode untouched when already configured', async () => {
+  const transport = createFetchRecorder({
+    config_backup: { config: { sessionViewerMode: 10 } },
+  });
+  const mist = createMistApi({ fetchFn: transport.fetchFn });
+  const result = await mist.ensureViewerSessionMode({ mode: 10 });
+  assert.equal(transport.calls.length, 1);
+  assert.deepEqual(commandFrom(transport.calls[0]), { config_backup: true });
+  assert.deepEqual(result, { changed: false, previousMode: 10, mode: 10 });
+});
