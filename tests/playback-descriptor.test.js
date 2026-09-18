@@ -42,3 +42,22 @@ test('fetchPlaybackDescriptor surfaces phase-aware playback failure details', as
     /hls-verify-start: segment HTTP 404/i,
   );
 });
+
+
+test('fetchPlaybackDescriptor forwards the caller abort signal', async () => {
+  const controller = new AbortController();
+  let seenSignal = null;
+  const fetchFn = async (_url, options = {}) => {
+    seenSignal = options.signal;
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return { channelId: 'iptv-3645', manifestUrl: 'https://stream-v2.example/hls/iptv-3645/index.m3u8' };
+      },
+    };
+  };
+
+  await fetchPlaybackDescriptor('3645', { fetchFn, signal: controller.signal });
+  assert.equal(seenSignal, controller.signal);
+});
