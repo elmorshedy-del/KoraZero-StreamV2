@@ -42,7 +42,7 @@ test('Mist API deleteStream sends deletestream without touching other streams', 
 test('Mist API getStream uses active_streams and never sends the destructive streams setter', async () => {
   const transport = createFetchRecorder({
     active_streams: {
-      'bein-1': { viewers: 2, inputs: 1, outputs: 2, tracks: 2, status: 'online' },
+      'bein-1': { viewers: 2, inputs: 1, outputs: 2, lastms: 12345, tracks: 2, status: 'online' },
     },
   });
   const mist = createMistApi({ fetchFn: transport.fetchFn });
@@ -52,13 +52,13 @@ test('Mist API getStream uses active_streams and never sends the destructive str
   assert.deepEqual(command, {
     active_streams: {
       stream: 'bein-1',
-      fields: ['viewers', 'inputs', 'outputs', 'health', 'tracks', 'status'],
+      fields: ['viewers', 'inputs', 'outputs', 'lastms', 'health', 'tracks', 'status'],
       longform: true,
     },
   });
   assert.deepEqual(status, {
     streamName: 'bein-1', active: true, viewers: 2, inputs: 1, outputs: 2,
-    tracks: 2, status: 'online', health: null,
+    lastms: 12345, tracks: 2, status: 'online', health: null,
   });
 });
 
@@ -67,7 +67,7 @@ test('Mist API getStream returns inactive when stream is not in active_streams',
   const mist = createMistApi({ fetchFn: transport.fetchFn });
   assert.deepEqual(await mist.getStream('bein-1'), {
     streamName: 'bein-1', active: false, viewers: 0, inputs: 0,
-    outputs: 0, tracks: 0, status: 'inactive', health: null,
+    outputs: 0, lastms: null, tracks: 0, status: 'inactive', health: null,
   });
 });
 

@@ -32,6 +32,7 @@ export function createSourceSupervisor({
         consecutiveUnhealthy: 0,
         recoveryAttempts: 0,
         nextRecoveryAt: 0,
+        lastMediaMs: null,
       });
     }
     return states.get(channelId);
@@ -47,7 +48,18 @@ export function createSourceSupervisor({
 
     const state = stateFor(channelId);
     const status = await mist.getStream(channelId);
-    const healthy = Number(status?.inputs ?? 0) > 0;
+    const inputPresent = Number(status?.inputs ?? 0) > 0;
+    const rawMediaMs = status?.lastms;
+    const parsedMediaMs = rawMediaMs === null || rawMediaMs === undefined || rawMediaMs === ''
+      ? null
+      : Number(rawMediaMs);
+    const hasMediaClock = Number.isFinite(parsedMediaMs);
+    const mediaProgressing = !hasMediaClock
+      || state.lastMediaMs === null
+      || parsedMediaMs > state.lastMediaMs;
+    const healthy = inputPresent && mediaProgressing;
+
+    if (hasMediaClock) state.lastMediaMs = parsedMediaMs;
 
     if (healthy) {
       state.healthy = true;
@@ -74,6 +86,7 @@ export function createSourceSupervisor({
       );
       state.nextRecoveryAt = now + delay;
       state.consecutiveUnhealthy = 0;
+      state.lastMediaMs = null;
     }
 
     return snapshot(state);

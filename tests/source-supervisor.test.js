@@ -140,3 +140,35 @@ test('background supervision checks only armed channels and disarm removes them'
   assert.deepEqual(calls, [['getStream', 'two']]);
   assert.deepEqual(supervisor.armedChannels(), ['two']);
 });
+
+
+test('frozen media clock becomes unhealthy even while Mist still reports one input', async () => {
+  const f = fixture([
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+  ]);
+
+  await f.supervisor.check('test-ts');
+  await f.supervisor.check('test-ts');
+  const state = await f.supervisor.check('test-ts');
+
+  assert.equal(state.recoveryAttempts, 1);
+  assert.equal(f.calls.filter(([name]) => name === 'nukeStream').length, 1);
+});
+
+test('advancing media clock remains healthy and never resets the source', async () => {
+  const f = fixture([
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 11000 },
+    { active: true, inputs: 1, lastms: 12000 },
+  ]);
+
+  await f.supervisor.check('test-ts');
+  await f.supervisor.check('test-ts');
+  const state = await f.supervisor.check('test-ts');
+
+  assert.equal(state.healthy, true);
+  assert.equal(state.recoveryAttempts, 0);
+  assert.equal(f.calls.some(([name]) => name === 'nukeStream'), false);
+});

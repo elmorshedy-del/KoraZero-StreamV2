@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:4242/api2';
-const STATUS_FIELDS = ['viewers', 'inputs', 'outputs', 'health', 'tracks', 'status'];
+const STATUS_FIELDS = ['viewers', 'inputs', 'outputs', 'lastms', 'health', 'tracks', 'status'];
 
 export function createMistApi({ endpoint = DEFAULT_ENDPOINT, username = '', password = '', bootstrapAccount = false, fetchFn = globalThis.fetch } = {}) {
   if (typeof fetchFn !== 'function') throw new Error('Mist API requires fetch');
@@ -95,6 +95,12 @@ export function createMistApi({ endpoint = DEFAULT_ENDPOINT, username = '', pass
     return { changed: true };
   }
 
+  function normalizedLastMs(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
   return Object.freeze({
     ensureHttpProtocol,
     ensureHlsProtocol,
@@ -127,6 +133,7 @@ export function createMistApi({ endpoint = DEFAULT_ENDPOINT, username = '', pass
           viewers: 0,
           inputs: 0,
           outputs: 0,
+          lastms: null,
           tracks: 0,
           status: 'inactive',
           health: null,
@@ -138,6 +145,7 @@ export function createMistApi({ endpoint = DEFAULT_ENDPOINT, username = '', pass
         viewers: Number(active.viewers ?? 0),
         inputs: Number(active.inputs ?? 0),
         outputs: Number(active.outputs ?? 0),
+        lastms: normalizedLastMs(active.lastms),
         tracks: Number(active.tracks ?? 0),
         status: active.status ?? 'active',
         health: active.health ?? null,
