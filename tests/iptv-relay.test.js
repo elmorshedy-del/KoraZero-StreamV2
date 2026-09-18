@@ -183,3 +183,72 @@ test('relay counts upstream HTTP failure as a failed provider open', async () =>
   assert.equal(relay.stats().successfulProviderOpens, 0);
   assert.equal(relay.stats().failedProviderOpens, 1);
 });
+
+
+test('relay permits one simultaneous provider pull per configured stream and reports per-stream counters', async () => {
+  const envTwo = {
+    ...env,
+    V2_IPTV_ALLOWED_STREAM_IDS: '3974,2454',
+  };
+  const controllers = new Map();
+  const relay = createIptvRelay(envTwo, {
+    fetchFn: async (url) => {
+      const streamId = /\/(\d+)\.ts$/.exec(url)?.[1];
+      return new Response(new ReadableStream({
+        start(controller) {
+          controllers.set(streamId, controller);
+          controller.enqueue(concat(tsPacket(256, 0), tsPacket(256, 1)));
+        },
+      }), { status: 200, headers: { 'content-type': 'video/mp2t' } });
+    },
+  });
+
+  const first = await relay.handle({ method: 'GET', pathname: '/live/3974.ts' });
+  const second = await relay.handle({ method: 'GET', pathname: '/live/2454.ts' });
+  const duplicate = await relay.handle({ method: 'GET', pathname: '/live/3974.ts' });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(duplicate.status, 503);
+
+  const stats = relay.stats();
+  assert.equal(stats.activePulls, 2);
+  assert.equal(stats.maxConcurrentPulls, 2);
+  assert.equal(stats.successfulProviderOpens, 2);
+  assert.equal(stats.rejectedConcurrentPulls, 1);
+  assert.deepEqual(stats.streams['3974'], {
+    activePulls: 1,
+    totalPulls: 1,
+    providerAttempts: 1,
+    successfulProviderOpens: 1,
+    failedProviderOpens: 0,
+    rejectedConcurrentPulls: 1,
+    realBytes: 0,
+    keepaliveBursts: 0,
+    keepaliveBytes: 0,
+  });
+  assert.deepEqual(stats.streams['2454'], {
+    activePulls: 1,
+    totalPulls: 1,
+    providerAttempts: 1,
+    successfulProviderOpens: 1,
+    failedProviderOpens: 0,
+    rejectedConcurrentPulls: 0,
+    realBytes: 0,
+    keepaliveBursts: 0,
+    keepaliveBytes: 0,
+  });
+
+  await first.body.cancel();
+  await second.body.cancel();
+  assert.equal(relay.stats().activePulls, 0);
+});
+
+test('relay still rejects stream ids outside the configured allowlist', async () => {
+  const relay = createIptvRelay({
+    ...env,
+    V2_IPTV_ALLOWED_STREAM_IDS: '3974,2454',
+  }, { fetchFn: async () => { throw new Error('not expected'); } });
+
+  assert.equal((await relay.handle({ method: 'GET', pathname: '/live/2449.ts' })).status, 404);
+});
