@@ -40,6 +40,22 @@ export function createSyntheticTsServer({ spawnFn = spawn, controlToken = '' } =
   return createServer((req, res) => {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
 
+    if (url.pathname === '/health') {
+      if (req.method !== 'GET') {
+        res.writeHead(405, { allow: 'GET' });
+        res.end();
+        return;
+      }
+      const body = JSON.stringify({ ok: true });
+      res.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'content-length': Buffer.byteLength(body),
+        'cache-control': 'no-store',
+      });
+      res.end(body);
+      return;
+    }
+
     if (url.pathname === '/stats') {
       if (req.method !== 'GET') {
         res.writeHead(405, { allow: 'GET' });
