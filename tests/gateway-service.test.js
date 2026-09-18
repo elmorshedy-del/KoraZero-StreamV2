@@ -323,3 +323,70 @@ test('stale Mist input bookkeeping never blocks a verified channel switch when p
   assert.ok(diagnostic.events.some((event) => event.phase === 'mist-stop-stale'));
   assert.equal(diagnostic.phase, 'verified');
 });
+
+
+test('newest catalog selection supersedes an older provider-slot wait', async () => {
+  const registry = createChannelRegistry({});
+  const mist = createMistFake();
+  let waitCalls = 0;
+  let firstWaitStartedResolve;
+  const firstWaitStarted = new Promise((resolve) => { firstWaitStartedResolve = resolve; });
+
+  const catalogClient = {
+    async list() {
+      return {
+        categories: [],
+        channels: [
+          { streamId: '111', name: 'Old', categoryId: '1', categoryName: 'Test' },
+          { streamId: '222', name: 'New', categoryId: '1', categoryName: 'Test' },
+        ],
+      };
+    },
+    async waitForFreeSlot({ signal } = {}) {
+      waitCalls += 1;
+      if (waitCalls === 1) {
+        firstWaitStartedResolve();
+        return new Promise((resolve, reject) => {
+          const rejectAbort = () => reject(
+            signal?.reason instanceof Error
+              ? signal.reason
+              : Object.assign(new Error('aborted'), { name: 'AbortError' }),
+          );
+          if (signal?.aborted) rejectAbort();
+          else signal?.addEventListener('abort', rejectAbort, { once: true });
+        });
+      }
+      return { activeConnections: 0, maxConnections: 1 };
+    },
+    async stats() {
+      return { streams: { '222': { transportMode: 'hls-to-ts', playlistFetches: 1, segmentFetches: 1 } } };
+    },
+  };
+
+  const gateway = createGatewayService({
+    registry,
+    mist,
+    publicHlsBase: 'https://stream-v2.example/hls',
+    catalogClient,
+    relayBase: 'http://relay.internal:8080',
+    playbackProbeFn: async () => ({ ok: true, segmentBytes: 1880, totalMs: 10 }),
+  });
+
+  const oldRequest = gateway.playback('111');
+  await firstWaitStarted;
+  const newRequest = gateway.playback('222');
+
+  await assert.rejects(oldRequest, /superseded/i);
+  const latest = await newRequest;
+
+  assert.equal(latest.channelId, 'iptv-222');
+  assert.equal(latest.verified, true);
+  assert.equal(mist.calls.some((call) => call[0] === 'addStream' && call[1] === 'iptv-111'), false);
+  assert.equal(mist.calls.filter((call) => call[0] === 'addStream' && call[1] === 'iptv-222').length, 1);
+
+  const oldDiagnostic = gateway.diagnostic('111');
+  assert.equal(oldDiagnostic.phase, 'cancelled');
+  assert.match(oldDiagnostic.error, /superseded/i);
+  const newDiagnostic = gateway.diagnostic('222');
+  assert.equal(newDiagnostic.phase, 'verified');
+});
