@@ -94,3 +94,42 @@ test('GET /stats reports source pull counters without starting ffmpeg', async ()
   });
   assert.equal(fake.calls.length, 0);
 });
+
+
+test('authorized disconnect control terminates the active source pull', async () => {
+  const { PassThrough } = await import('node:stream');
+  const stdout = new PassThrough();
+  let kills = 0;
+  const spawnFn = () => ({
+    stdout,
+    kill() { kills += 1; },
+    on() {},
+  });
+
+  const server = createSyntheticTsServer({ spawnFn, controlToken: 'fault-secret' });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  let liveResponse;
+  try {
+    liveResponse = await fetch(`${base}/live.ts`);
+    let stats = await (await fetch(`${base}/stats`)).json();
+    assert.equal(stats.activePulls, 1);
+    assert.equal(stats.totalPulls, 1);
+
+    const response = await fetch(`${base}/control/disconnect`, {
+      method: 'POST',
+      headers: { authorization: 'Bearer fault-secret' },
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { disconnected: 1 });
+
+    stats = await (await fetch(`${base}/stats`)).json();
+    assert.equal(stats.activePulls, 0);
+    assert.equal(stats.totalPulls, 1);
+    assert.equal(kills, 1);
+  } finally {
+    await liveResponse?.body?.cancel().catch(() => {});
+    stdout.destroy();
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
