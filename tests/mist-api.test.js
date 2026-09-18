@@ -132,3 +132,35 @@ test('Mist API ensureHttpProtocol is idempotent when HTTP already exists', async
   assert.deepEqual(commandFrom(transport.calls[0]), { config_backup: true });
   assert.deepEqual(result, { changed: false, port: 8080 });
 });
+
+test('Mist API authenticates remote commands with challenge-response without sending plaintext password', async () => {
+  const calls = [];
+  const fetchFn = async (_url, options) => {
+    const command = JSON.parse(new URLSearchParams(options.body).get('command'));
+    calls.push(command);
+    if (calls.length === 1) {
+      return { ok: true, status: 200, async json() { return { authorize: { status: 'CHALL', challenge: 'abc123' } }; } };
+    }
+    return { ok: true, status: 200, async json() { return { authorize: { status: 'OK' }, config_backup: { protocols: [] } }; } };
+  };
+  const mist = createMistApi({ username: 'v2control', password: 'secret', fetchFn });
+
+  await mist.ensureHttpProtocol({ port: 8080 });
+
+  assert.deepEqual(calls[0].authorize, { username: 'v2control', password: '' });
+  assert.equal(calls[0].minimal, 1);
+  assert.equal(calls[1].authorize.username, 'v2control');
+  assert.equal(calls[1].authorize.password, '7840a038e45863d5ef110af0145f1b06');
+  assert.notEqual(calls[1].authorize.password, 'secret');
+});
+
+test('Mist API fails closed when remote MistServer has no configured account', async () => {
+  const fetchFn = async () => ({
+    ok: true,
+    status: 200,
+    async json() { return { authorize: { status: 'NOACC' } }; },
+  });
+  const mist = createMistApi({ username: 'v2control', password: 'secret', fetchFn });
+
+  await assert.rejects(() => mist.getStream('bein-1'), /no account/i);
+});

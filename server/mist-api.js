@@ -1,10 +1,16 @@
+import { createHash } from 'node:crypto';
+
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:4242/api2';
 const STATUS_FIELDS = ['viewers', 'inputs', 'outputs', 'health', 'tracks', 'status'];
 
-export function createMistApi({ endpoint = DEFAULT_ENDPOINT, fetchFn = globalThis.fetch } = {}) {
+export function createMistApi({ endpoint = DEFAULT_ENDPOINT, username = '', password = '', fetchFn = globalThis.fetch } = {}) {
   if (typeof fetchFn !== 'function') throw new Error('Mist API requires fetch');
 
-  async function command(payload) {
+  function md5(value) {
+    return createHash('md5').update(value).digest('hex');
+  }
+
+  async function post(payload) {
     const body = new URLSearchParams({ command: JSON.stringify(payload) }).toString();
     const response = await fetchFn(endpoint, {
       method: 'POST',
@@ -15,6 +21,44 @@ export function createMistApi({ endpoint = DEFAULT_ENDPOINT, fetchFn = globalThi
       throw new Error(`MistServer API request failed with HTTP ${response?.status ?? 'unknown'}`);
     }
     return response.json();
+  }
+
+  function assertAuthorized(response) {
+    const status = response?.authorize?.status;
+    if (status === 'NOACC') throw new Error('MistServer has no account configured');
+    if (status === 'CHALL') throw new Error('MistServer authentication failed');
+    return response;
+  }
+
+  async function command(payload) {
+    if (!username && !password) {
+      return assertAuthorized(await post(payload));
+    }
+
+    const first = await post({
+      ...payload,
+      authorize: { username, password: '' },
+      minimal: 1,
+    });
+    const status = first?.authorize?.status;
+    if (status === 'OK') return first;
+    if (status === 'NOACC') throw new Error('MistServer has no account configured');
+    if (status !== 'CHALL' || !first.authorize.challenge) {
+      throw new Error(`Unexpected MistServer authorization status: ${status ?? 'missing'}`);
+    }
+
+    const response = await post({
+      ...payload,
+      authorize: {
+        username,
+        password: md5(md5(password) + first.authorize.challenge),
+      },
+      minimal: 1,
+    });
+    if (response?.authorize?.status !== 'OK') {
+      throw new Error('MistServer authentication failed');
+    }
+    return response;
   }
 
   async function ensureHttpProtocol({ port = 8080 } = {}) {

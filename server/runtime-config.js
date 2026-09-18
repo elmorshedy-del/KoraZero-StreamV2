@@ -25,11 +25,21 @@ export function createRuntime(env = process.env, { fetchFn = globalThis.fetch } 
   const internalToken = requireEnv(env, 'V2_INTERNAL_TOKEN');
   const publicHlsBase = requireEnv(env, 'V2_PUBLIC_HLS_BASE');
   const mistEndpoint = (env.V2_MIST_API_ENDPOINT || 'http://127.0.0.1:4242/api2').trim();
+  const mistUsername = (env.V2_MIST_USERNAME || '').trim();
+  const mistPassword = env.V2_MIST_PASSWORD || '';
+  if (Boolean(mistUsername) !== Boolean(mistPassword)) {
+    throw new Error('MistServer credentials require both V2_MIST_USERNAME and V2_MIST_PASSWORD');
+  }
   const port = Number(env.PORT || 8787);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be a valid TCP port');
 
   const registry = createChannelRegistry(channels);
-  const mist = createMistApi({ endpoint: mistEndpoint, fetchFn });
+  const mist = createMistApi({
+    endpoint: mistEndpoint,
+    username: mistUsername,
+    password: mistPassword,
+    fetchFn,
+  });
   const gateway = createGatewayService({ registry, mist, publicHlsBase });
 
   return Object.freeze({ port, internalToken, registry, mist, gateway });

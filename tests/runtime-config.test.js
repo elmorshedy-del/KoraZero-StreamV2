@@ -34,3 +34,28 @@ test('runtime config rejects malformed channel JSON', () => {
     V2_PUBLIC_HLS_BASE: 'https://stream-v2.example/hls',
   }), /V2_CHANNELS_JSON/i);
 });
+
+test('runtime config accepts private MistServer API credentials without exposing them in playback descriptors', () => {
+  const runtime = createRuntime({
+    V2_CHANNELS_JSON: JSON.stringify({ 'bein-1': { source: 'https://provider.invalid/private.ts' } }),
+    V2_INTERNAL_TOKEN: 'internal-secret',
+    V2_PUBLIC_HLS_BASE: 'https://stream-v2.example/hls',
+    V2_MIST_API_ENDPOINT: 'http://mist.internal:4242/api2',
+    V2_MIST_USERNAME: 'v2control',
+    V2_MIST_PASSWORD: 'mist-secret',
+  }, { fetchFn: async () => { throw new Error('not called'); } });
+
+  const descriptor = runtime.gateway.playback('bein-1');
+  assert.equal(JSON.stringify(descriptor).includes('mist-secret'), false);
+  assert.equal(JSON.stringify(descriptor).includes('v2control'), false);
+});
+
+test('runtime config rejects half-configured MistServer credentials', () => {
+  const base = {
+    V2_CHANNELS_JSON: '{}',
+    V2_INTERNAL_TOKEN: 'internal-secret',
+    V2_PUBLIC_HLS_BASE: 'https://stream-v2.example/hls',
+  };
+  assert.throws(() => createRuntime({ ...base, V2_MIST_USERNAME: 'v2control' }), /MistServer credentials/i);
+  assert.throws(() => createRuntime({ ...base, V2_MIST_PASSWORD: 'secret' }), /MistServer credentials/i);
+});
