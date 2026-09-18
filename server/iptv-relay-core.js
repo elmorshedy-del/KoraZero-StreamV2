@@ -1,4 +1,80 @@
 const VLC_USER_AGENT = 'VLC/3.0.18 LibVLC/3.0.18';
+const TS_PACKET_BYTES = 188;
+const MIST_TIMEOUT_RESET_BYTES = 25_600;
+const NULL_BURST_PACKETS = 140;
+const DEFAULT_IDLE_KEEPALIVE_MS = 2_000;
+
+function concatBytes(left, right) {
+  if (!left?.length) return right;
+  if (!right?.length) return left;
+  const merged = new Uint8Array(left.length + right.length);
+  merged.set(left, 0);
+  merged.set(right, left.length);
+  return merged;
+}
+
+function createNullBurst() {
+  const burst = new Uint8Array(NULL_BURST_PACKETS * TS_PACKET_BYTES);
+  for (let packet = 0; packet < NULL_BURST_PACKETS; packet += 1) {
+    const offset = packet * TS_PACKET_BYTES;
+    burst[offset] = 0x47;
+    burst[offset + 1] = 0x1f;
+    burst[offset + 2] = 0xff;
+    burst[offset + 3] = 0x10 | (packet & 0x0f);
+    burst.fill(0xff, offset + 4, offset + TS_PACKET_BYTES);
+  }
+  if (burst.length <= MIST_TIMEOUT_RESET_BYTES) throw new Error('IPTV null burst is too small for Mist timeout reset');
+  return burst;
+}
+
+const NULL_BURST = createNullBurst();
+
+function createTsFramer() {
+  let carry = new Uint8Array(0);
+  let synced = false;
+
+  function findSync(bytes) {
+    if (bytes.length < TS_PACKET_BYTES * 2) return -1;
+    const limit = Math.min(TS_PACKET_BYTES, bytes.length - TS_PACKET_BYTES);
+    for (let offset = 0; offset < limit; offset += 1) {
+      if (bytes[offset] === 0x47 && bytes[offset + TS_PACKET_BYTES] === 0x47) return offset;
+    }
+    return -1;
+  }
+
+  return {
+    push(value) {
+      let bytes = concatBytes(carry, value);
+      carry = new Uint8Array(0);
+
+      if (!synced) {
+        const offset = findSync(bytes);
+        if (offset < 0) {
+          carry = bytes.slice(Math.max(0, bytes.length - (TS_PACKET_BYTES * 2 - 1)));
+          return new Uint8Array(0);
+        }
+        bytes = bytes.slice(offset);
+        synced = true;
+      }
+
+      let packetCount = Math.floor(bytes.length / TS_PACKET_BYTES);
+      let validPackets = 0;
+      while (validPackets < packetCount && bytes[validPackets * TS_PACKET_BYTES] === 0x47) validPackets += 1;
+
+      if (validPackets < packetCount) {
+        const validBytes = validPackets * TS_PACKET_BYTES;
+        const output = bytes.slice(0, validBytes);
+        carry = bytes.slice(validBytes + 1);
+        synced = false;
+        return output;
+      }
+
+      const fullBytes = packetCount * TS_PACKET_BYTES;
+      carry = bytes.slice(fullBytes);
+      return bytes.slice(0, fullBytes);
+    },
+  };
+}
 
 function required(env, key) {
   const value = typeof env?.[key] === 'string' ? env[key].trim() : '';
@@ -20,7 +96,7 @@ function normalizePortal(raw) {
   return url.toString().replace(/\/$/, '');
 }
 
-export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch, log = () => {} } = {}) {
+export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch, log = () => {}, idleKeepaliveMs = DEFAULT_IDLE_KEEPALIVE_MS } = {}) {
   const portal = normalizePortal(required(env, 'V2_IPTV_PORTAL_URL'));
   const username = required(env, 'V2_IPTV_USERNAME');
   const password = required(env, 'V2_IPTV_PASSWORD');
@@ -33,6 +109,9 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
     maxConcurrentPulls: 0,
     rejectedConcurrentPulls: 0,
     lastStatus: null,
+    realBytes: 0,
+    keepaliveBursts: 0,
+    keepaliveBytes: 0,
   };
 
   function snapshot() {
@@ -114,16 +193,56 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
       log({ event: 'upstream-open', streamId: allowedStreamId, status: upstream.status, finalHost });
 
       const reader = upstream.body.getReader();
+      const framer = createTsFramer();
+      let pendingRead = null;
+
+      const getPendingRead = () => {
+        if (!pendingRead) {
+          pendingRead = reader.read().then(
+            (result) => ({ ok: true, result }),
+            (error) => ({ ok: false, error }),
+          );
+        }
+        return pendingRead;
+      };
+
       const body = new ReadableStream({
         async pull(out) {
           try {
-            const { done, value } = await reader.read();
-            if (done) {
-              release();
-              out.close();
-              return;
+            while (true) {
+              let timer = null;
+              const idle = new Promise((resolve) => {
+                timer = setTimeout(() => resolve({ idle: true }), idleKeepaliveMs);
+              });
+              const winner = await Promise.race([
+                getPendingRead().then((read) => ({ idle: false, read })),
+                idle,
+              ]);
+              if (timer) clearTimeout(timer);
+
+              if (winner.idle) {
+                stats.keepaliveBursts += 1;
+                stats.keepaliveBytes += NULL_BURST.length;
+                out.enqueue(NULL_BURST);
+                return;
+              }
+
+              pendingRead = null;
+              if (!winner.read.ok) throw winner.read.error;
+              const { done, value } = winner.read.result;
+              if (done) {
+                release();
+                out.close();
+                return;
+              }
+
+              stats.realBytes += value?.byteLength || 0;
+              const framed = framer.push(value || new Uint8Array(0));
+              if (framed.length) {
+                out.enqueue(framed);
+                return;
+              }
             }
-            out.enqueue(value);
           } catch (error) {
             release();
             out.error(error);
