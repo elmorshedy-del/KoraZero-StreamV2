@@ -252,3 +252,81 @@ test('relay still rejects stream ids outside the configured allowlist', async ()
 
   assert.equal((await relay.handle({ method: 'GET', pathname: '/live/2449.ts' })).status, 404);
 });
+
+
+function patPacket(programs) {
+  const packet = new Uint8Array(188);
+  packet.fill(0xff);
+  packet[0] = 0x47;
+  packet[1] = 0x40; // PUSI + PID 0
+  packet[2] = 0x00;
+  packet[3] = 0x10; // payload only
+  packet[4] = 0x00; // pointer_field
+  const sectionLength = 9 + (programs.length * 4);
+  packet[5] = 0x00; // PAT table_id
+  packet[6] = 0xb0 | ((sectionLength >> 8) & 0x0f);
+  packet[7] = sectionLength & 0xff;
+  packet[8] = 0x00;
+  packet[9] = 0x01; // transport_stream_id
+  packet[10] = 0xc1; // version 0, current_next=1
+  packet[11] = 0x00;
+  packet[12] = 0x00;
+  let offset = 13;
+  for (const { programNumber, pmtPid } of programs) {
+    packet[offset] = (programNumber >> 8) & 0xff;
+    packet[offset + 1] = programNumber & 0xff;
+    packet[offset + 2] = 0xe0 | ((pmtPid >> 8) & 0x1f);
+    packet[offset + 3] = pmtPid & 0xff;
+    offset += 4;
+  }
+  // CRC bytes may be zero for parser tests; parser does not validate CRC.
+  packet.fill(0x00, offset, offset + 4);
+  return packet;
+}
+
+test('relay passively detects multiple MPEG-TS programs from PAT without another provider request', async () => {
+  const bytes = concat(
+    patPacket([
+      { programNumber: 101, pmtPid: 1001 },
+      { programNumber: 202, pmtPid: 1002 },
+    ]),
+    tsPacket(256, 0),
+  );
+  const relay = createIptvRelay(env, {
+    fetchFn: async () => new Response(bytes, {
+      status: 200,
+      headers: { 'content-type': 'video/mp2t' },
+    }),
+  });
+
+  const response = await relay.handle({ method: 'GET', pathname: '/live/3974.ts' });
+  await response.arrayBuffer();
+
+  assert.deepEqual(relay.stats().streams['3974'].transportPrograms, [
+    { programNumber: 101, pmtPid: 1001 },
+    { programNumber: 202, pmtPid: 1002 },
+  ]);
+  assert.equal(relay.stats().streams['3974'].transportProgramCount, 2);
+  assert.equal(relay.stats().streams['3974'].transportKind, 'mpts');
+});
+
+test('relay labels a one-program PAT as SPTS', async () => {
+  const bytes = concat(
+    patPacket([{ programNumber: 7, pmtPid: 4096 }]),
+    tsPacket(257, 0),
+  );
+  const relay = createIptvRelay(env, {
+    fetchFn: async () => new Response(bytes, {
+      status: 200,
+      headers: { 'content-type': 'video/mp2t' },
+    }),
+  });
+
+  const response = await relay.handle({ method: 'GET', pathname: '/live/3974.ts' });
+  await response.arrayBuffer();
+
+  const stats = relay.stats().streams['3974'];
+  assert.deepEqual(stats.transportPrograms, [{ programNumber: 7, pmtPid: 4096 }]);
+  assert.equal(stats.transportProgramCount, 1);
+  assert.equal(stats.transportKind, 'spts');
+});
