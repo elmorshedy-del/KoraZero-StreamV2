@@ -123,6 +123,13 @@ export function createMistApi({ endpoint = DEFAULT_ENDPOINT, username = '', pass
     ensureHlsProtocol,
     ensureViewerSessionMode,
 
+    async listConfiguredStreams() {
+      const response = await command({ config_backup: true });
+      const streams = response?.config_backup?.streams;
+      if (!streams || typeof streams !== 'object' || Array.isArray(streams)) return [];
+      return Object.keys(streams).sort();
+    },
+
     async addStream(name, source, options = {}) {
       return command({ addstream: { [name]: { ...options, source } } });
     },
