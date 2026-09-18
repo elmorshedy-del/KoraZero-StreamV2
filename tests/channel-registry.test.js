@@ -33,3 +33,15 @@ test('channel registry rejects missing or empty sources', () => {
     /source/i,
   );
 });
+
+test('channel registry exposes a server-only snapshot for startup registration', () => {
+  const registry = createChannelRegistry({
+    'bein-1': { source: 'https://provider.invalid/one.ts' },
+    'bein-2': { source: 'https://provider.invalid/two.ts' },
+  });
+
+  assert.deepEqual(registry.entries(), [
+    { channelId: 'bein-1', source: 'https://provider.invalid/one.ts' },
+    { channelId: 'bein-2', source: 'https://provider.invalid/two.ts' },
+  ]);
+});

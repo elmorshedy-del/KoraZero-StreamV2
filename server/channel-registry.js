@@ -21,5 +21,8 @@ export function createChannelRegistry(entries = {}) {
     get(channelId) {
       return channels.get(channelId) ?? null;
     },
+    entries() {
+      return [...channels.values()].map((entry) => ({ ...entry }));
+    },
   });
 }

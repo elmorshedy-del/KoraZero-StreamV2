@@ -86,3 +86,30 @@ test('app bootstrap ensures the MistServer HTTP output before serving viewers', 
     { addprotocol: { connector: 'HTTP', port: 8080 } },
   ]);
 });
+
+test('app bootstrap registers configured channels after ensuring HTTP output', async () => {
+  const commands = [];
+  const fetchFn = async (_url, options) => {
+    const command = JSON.parse(new URLSearchParams(options.body).get('command'));
+    commands.push(command);
+    if (command.config_backup) {
+      return { ok: true, status: 200, async json() { return { config_backup: { protocols: [{ connector: 'HTTP', port: 8080 }] } }; } };
+    }
+    return { ok: true, status: 200, async json() { return {}; } };
+  };
+  const app = createApp({
+    V2_CHANNELS_JSON: JSON.stringify({
+      'test-hls': { source: 'https://test.invalid/master.m3u8' },
+    }),
+    V2_INTERNAL_TOKEN: 'secret',
+    V2_PUBLIC_HLS_BASE: 'https://media.example/hls',
+    V2_MIST_API_ENDPOINT: 'http://mist.internal:4242/api2',
+  }, { fetchFn });
+
+  await app.bootstrap();
+
+  assert.deepEqual(commands, [
+    { config_backup: true },
+    { addstream: { 'test-hls': { source: 'https://test.invalid/master.m3u8' } } },
+  ]);
+});

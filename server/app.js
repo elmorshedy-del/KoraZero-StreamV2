@@ -12,7 +12,11 @@ export function createApp(env = process.env, { fetchFn = globalThis.fetch, stati
     staticRoot,
   });
   async function bootstrap() {
-    return runtime.mist.ensureHttpProtocol({ port: 8080 });
+    const protocol = await runtime.mist.ensureHttpProtocol({ port: 8080 });
+    for (const entry of runtime.registry.entries()) {
+      await runtime.mist.addStream(entry.channelId, entry.source);
+    }
+    return { protocol, channels: runtime.registry.entries().map((entry) => entry.channelId) };
   }
 
   return Object.freeze({
