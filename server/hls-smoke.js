@@ -158,7 +158,10 @@ export async function runFanoutSmokeTest({
   hlsBase,
   sourceStatsUrl,
   viewers = 5,
+  readyAttempts = 20,
+  readyDelayMs = 250,
   fetchFn = globalThis.fetch,
+  sleepFn = sleep,
 }) {
   if (!channelId) throw new Error('Fanout smoke requires channelId');
   if (!hlsBase) throw new Error('Fanout smoke requires hlsBase');
@@ -166,9 +169,25 @@ export async function runFanoutSmokeTest({
   if (!Number.isInteger(viewers) || viewers < 2) throw new Error('Fanout smoke requires at least two viewers');
   if (typeof fetchFn !== 'function') throw new Error('Fanout smoke requires fetch');
 
-  const before = await fetchJson(sourceStatsUrl, fetchFn);
-  if (Number(before.activePulls) !== 1) {
-    throw new Error(`Fanout smoke expected exactly one active upstream pull before viewers, got ${before.activePulls}`);
+  if (!Number.isInteger(readyAttempts) || readyAttempts < 1) {
+    throw new Error('Fanout smoke readyAttempts must be an integer >= 1');
+  }
+  if (!Number.isFinite(readyDelayMs) || readyDelayMs < 0) {
+    throw new Error('Fanout smoke readyDelayMs must be >= 0');
+  }
+
+  let before = null;
+  for (let attempt = 1; attempt <= readyAttempts; attempt += 1) {
+    before = await fetchJson(sourceStatsUrl, fetchFn);
+    const activePulls = Number(before.activePulls);
+    if (activePulls === 1) break;
+    if (activePulls > 1) {
+      throw new Error(`Fanout smoke expected exactly one active upstream pull before viewers, got ${before.activePulls}`);
+    }
+    if (attempt === readyAttempts) {
+      throw new Error(`Fanout smoke upstream pull did not become ready after ${readyAttempts} attempts`);
+    }
+    await sleepFn(readyDelayMs);
   }
 
   const rootUrl = smokeUrl(hlsBase, channelId);
