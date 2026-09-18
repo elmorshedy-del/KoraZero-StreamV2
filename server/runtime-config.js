@@ -63,6 +63,7 @@ export function createRuntime(env = process.env, { fetchFn = globalThis.fetch } 
     sourceSupervisor,
     catalogClient,
     relayBase,
+    fetchFn,
   });
 
   return Object.freeze({
