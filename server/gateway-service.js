@@ -124,8 +124,6 @@ export function createGatewayService({
   async function failAttempt(attempt, error, mistChannelId = null) {
     attempt.ok = false;
     attempt.error = error instanceof Error ? error.message : String(error);
-    attempt.finishedAt = new Date().toISOString();
-    record(attempt, 'failed', { error: attempt.error });
 
     if (mistChannelId) {
       try { await mist.nukeStream(mistChannelId); } catch {}
@@ -140,7 +138,10 @@ export function createGatewayService({
         });
       } catch {}
     }
+
     activeCatalogChannel = null;
+    attempt.finishedAt = new Date().toISOString();
+    record(attempt, 'failed', { error: attempt.error });
   }
 
   async function switchCatalogChannel(streamId) {
