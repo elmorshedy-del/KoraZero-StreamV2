@@ -34,3 +34,24 @@ test('IPTV catalog client waits until the provider slot is free', async () => {
   assert.equal(status.activeConnections, 0);
   assert.equal(accountReads, 3);
 });
+
+
+test('IPTV catalog client aborts provider-slot polling immediately', async () => {
+  const controller = new AbortController();
+  let accountReads = 0;
+  const client = createIptvCatalogClient({
+    baseUrl: 'http://relay.internal:8080',
+    fetchFn: async (url) => {
+      assert.ok(url.endsWith('/account'));
+      accountReads += 1;
+      controller.abort(Object.assign(new Error('client-left'), { name: 'AbortError' }));
+      return new Response(JSON.stringify({ activeConnections: 1, maxConnections: 1 }), { status: 200 });
+    },
+  });
+
+  await assert.rejects(
+    () => client.waitForFreeSlot({ timeoutMs: 30_000, pollMs: 5_000, signal: controller.signal }),
+    /client-left/i,
+  );
+  assert.equal(accountReads, 1);
+});
