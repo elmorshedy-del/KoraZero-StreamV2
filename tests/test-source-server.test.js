@@ -133,3 +133,15 @@ test('authorized disconnect control terminates the active source pull', async ()
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });
+
+
+test('GET /health reports readiness without starting ffmpeg', async () => {
+  const fake = fakeSpawnRecorder();
+  await withServer(fake.spawnFn, async (base) => {
+    const response = await fetch(`${base}/health`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') || '', /application\/json/);
+    assert.deepEqual(await response.json(), { ok: true });
+  });
+  assert.equal(fake.calls.length, 0);
+});
