@@ -51,6 +51,29 @@ function tryStatic(res, pathname, staticRoot) {
   return true;
 }
 
+function createRequestAbort(req, res) {
+  const controller = new AbortController();
+  const abort = () => {
+    if (!controller.signal.aborted) {
+      const error = new Error('Client closed playback request');
+      error.name = 'AbortError';
+      controller.abort(error);
+    }
+  };
+  const onClose = () => {
+    if (!res.writableEnded) abort();
+  };
+  req.once('aborted', abort);
+  res.once('close', onClose);
+  return {
+    signal: controller.signal,
+    cleanup() {
+      req.off('aborted', abort);
+      res.off('close', onClose);
+    },
+  };
+}
+
 export function createControlServer({ gateway, internalToken, staticRoot = null }) {
   if (!gateway) throw new Error('control server requires gateway');
   if (!internalToken) throw new Error('control server requires internalToken');
@@ -72,7 +95,14 @@ export function createControlServer({ gateway, internalToken, staticRoot = null 
 
       const publicChannel = channelFrom(pathname, '/api/playback/');
       if (req.method === 'GET' && publicChannel) {
-        return sendJson(res, 200, await gateway.playback(publicChannel));
+        const requestAbort = createRequestAbort(req, res);
+        try {
+          const value = await gateway.playback(publicChannel, { signal: requestAbort.signal });
+          if (requestAbort.signal.aborted || res.destroyed || res.writableEnded) return;
+          return sendJson(res, 200, value);
+        } finally {
+          requestAbort.cleanup();
+        }
       }
 
       if (pathname.startsWith('/internal/')) {
@@ -96,6 +126,7 @@ export function createControlServer({ gateway, internalToken, staticRoot = null 
       if (req.method === 'GET' && tryStatic(res, pathname, staticRoot)) return;
       return sendJson(res, 404, { error: 'not_found' });
     } catch (error) {
+      if (error?.name === 'AbortError' || res.destroyed || res.writableEnded) return;
       const message = error instanceof Error ? error.message : String(error);
       if (/unknown channel/i.test(message)) {
         return sendJson(res, 404, { error: 'unknown_channel' });
