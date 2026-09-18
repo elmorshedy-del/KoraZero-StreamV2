@@ -47,9 +47,9 @@ test('activate configures MistServer exactly once for the logical channel and re
   assert.equal(JSON.stringify(result).includes('provider.invalid'), false);
 });
 
-test('playback descriptor never activates or exposes the provider source', () => {
+test('playback descriptor never activates or exposes the provider source', async () => {
   const { gateway, mist } = fixture();
-  const result = gateway.playback('bein-1');
+  const result = await gateway.playback('bein-1');
   assert.deepEqual(mist.calls, []);
   assert.deepEqual(result, {
     channelId: 'bein-1',
@@ -77,7 +77,7 @@ test('stop removes only the requested stream', async () => {
 
 test('unknown channels fail before touching MistServer', async () => {
   const { gateway, mist } = fixture();
-  assert.throws(() => gateway.playback('missing'), /unknown channel/i);
+  await assert.rejects(() => gateway.playback('missing'), /unknown channel/i);
   await assert.rejects(() => gateway.activate('missing'), /unknown channel/i);
   await assert.rejects(() => gateway.status('missing'), /unknown channel/i);
   await assert.rejects(() => gateway.stop('missing'), /unknown channel/i);
@@ -99,4 +99,46 @@ test('activate arms bounded source recovery and stop disarms it', async () => {
     ['arm', 'bein-1'],
     ['disarm', 'bein-1'],
   ]);
+});
+
+
+test('catalog playback switches one provider-backed Mist input at a time', async () => {
+  const registry = createChannelRegistry({});
+  const mist = createMistFake();
+  const events = [];
+  const catalogClient = {
+    async list() {
+      return {
+        categories: [{ categoryId: '6', name: 'beIN Sports HD', count: 2 }],
+        channels: [
+          { streamId: '2449', name: 'beIN Sport 1 HD Q', categoryId: '6', categoryName: 'beIN Sports HD' },
+          { streamId: '2454', name: 'beIN Sport 2 HD Q', categoryId: '6', categoryName: 'beIN Sports HD' },
+        ],
+      };
+    },
+    async waitForFreeSlot() {
+      events.push('slot-free');
+      return { activeConnections: 0, maxConnections: 1 };
+    },
+  };
+  const gateway = createGatewayService({
+    registry,
+    mist,
+    publicHlsBase: 'https://stream-v2.example/hls',
+    catalogClient,
+    relayBase: 'http://relay.internal:8080',
+  });
+
+  const first = await gateway.playback('2449');
+  const second = await gateway.playback('2454');
+
+  assert.equal(first.channelId, 'iptv-2449');
+  assert.equal(second.channelId, 'iptv-2454');
+  assert.deepEqual(events, ['slot-free', 'slot-free']);
+  assert.deepEqual(mist.calls, [
+    ['addStream', 'iptv-2449', 'http://relay.internal:8080/live/2449.ts', { always_on: true }],
+    ['deleteStream', 'iptv-2449'],
+    ['addStream', 'iptv-2454', 'http://relay.internal:8080/live/2454.ts', { always_on: true }],
+  ]);
+  assert.equal(JSON.stringify(second).includes('relay.internal'), false);
 });
