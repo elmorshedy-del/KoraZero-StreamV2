@@ -3,3 +3,5 @@ node_modules/
 .env
 infra/mistserver/config.json
 .DS_Store
+
+.worktrees/

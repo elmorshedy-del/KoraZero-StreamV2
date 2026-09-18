@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="robots" content="noindex,nofollow" />
+  <title>KoraZero Stream V2 Lab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles/korazero.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container nav">
+      <a class="logo" href="./watch.html">Kora<b>Zero</b></a>
+      <span class="badge">V2 Lab</span>
+      <span class="nav-note">Same player engine · diagnostics only</span>
+    </div>
+  </header>
+
+  <main class="watch-wrap">
+    <div class="container">
+      <div class="watch-head">
+        <div>
+          <h1 class="watch-title">مختبر البث V2</h1>
+          <p class="watch-subtitle">لا يوجد مشغل منفصل للمختبر. هذه الصفحة تستخدم نفس وحدة التشغيل تمامًا.</p>
+        </div>
+        <span class="badge" id="player-state">IDLE</span>
+      </div>
+
+      <div class="lab-grid">
+        <section class="card">
+          <div class="player-shell">
+            <video id="live-video" controls playsinline preload="metadata"></video>
+          </div>
+          <form class="lab-controls" id="lab-form">
+            <input id="channel-input" type="text" inputmode="text" placeholder="Logical channel ID, e.g. bein-1" autocomplete="off" />
+            <button type="submit">Load channel</button>
+          </form>
+        </section>
+        <aside class="card">
+          <div class="telemetry" id="telemetry-output">No session yet.</div>
+        </aside>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.13/dist/hls.min.js"></script>
+  <script type="module" src="./player/lab-entry.js"></script>
+</body>
+</html>

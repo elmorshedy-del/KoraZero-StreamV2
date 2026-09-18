@@ -1,0 +1,96 @@
+import { createServer } from 'node:http';
+import { createReadStream, existsSync, statSync } from 'node:fs';
+import { extname, join, normalize, resolve } from 'node:path';
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+};
+
+function sendJson(res, statusCode, value) {
+  const body = JSON.stringify(value);
+  res.writeHead(statusCode, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': Buffer.byteLength(body),
+    'cache-control': 'no-store',
+  });
+  res.end(body);
+}
+
+function channelFrom(pathname, prefix, suffix = '') {
+  if (!pathname.startsWith(prefix) || (suffix && !pathname.endsWith(suffix))) return null;
+  const end = suffix ? -suffix.length : undefined;
+  const raw = pathname.slice(prefix.length, end);
+  if (!raw || raw.includes('/')) return null;
+  try { return decodeURIComponent(raw); } catch { return null; }
+}
+
+function tryStatic(res, pathname, staticRoot) {
+  if (!staticRoot) return false;
+  const root = resolve(staticRoot);
+  const requested = pathname === '/' ? '/watch.html' : pathname;
+  let decoded;
+  try { decoded = decodeURIComponent(requested); } catch { return false; }
+  const relative = normalize(decoded).replace(/^([/\\])+/, '');
+  const path = resolve(join(root, relative));
+  if (path !== root && !path.startsWith(`${root}/`)) return false;
+  if (!existsSync(path) || !statSync(path).isFile()) return false;
+
+  res.writeHead(200, {
+    'content-type': MIME[extname(path).toLowerCase()] || 'application/octet-stream',
+    'cache-control': 'no-store',
+  });
+  createReadStream(path).pipe(res);
+  return true;
+}
+
+export function createControlServer({ gateway, internalToken, staticRoot = null }) {
+  if (!gateway) throw new Error('control server requires gateway');
+  if (!internalToken) throw new Error('control server requires internalToken');
+
+  return createServer(async (req, res) => {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    const { pathname } = url;
+
+    try {
+      const publicChannel = channelFrom(pathname, '/api/playback/');
+      if (req.method === 'GET' && publicChannel) {
+        return sendJson(res, 200, gateway.playback(publicChannel));
+      }
+
+      if (pathname.startsWith('/internal/')) {
+        if (req.headers.authorization !== `Bearer ${internalToken}`) {
+          return sendJson(res, 401, { error: 'unauthorized' });
+        }
+
+        const operations = [
+          { suffix: '/activate', method: 'POST', action: (id) => gateway.activate(id) },
+          { suffix: '/status', method: 'GET', action: (id) => gateway.status(id) },
+          { suffix: '/stop', method: 'POST', action: (id) => gateway.stop(id) },
+        ];
+        for (const operation of operations) {
+          const channelId = channelFrom(pathname, '/internal/channels/', operation.suffix);
+          if (channelId && req.method === operation.method) {
+            return sendJson(res, 200, await operation.action(channelId));
+          }
+        }
+      }
+
+      if (req.method === 'GET' && tryStatic(res, pathname, staticRoot)) return;
+      return sendJson(res, 404, { error: 'not_found' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/unknown channel/i.test(message)) {
+        return sendJson(res, 404, { error: 'unknown_channel' });
+      }
+      return sendJson(res, 502, { error: 'gateway_error' });
+    }
+  });
+}

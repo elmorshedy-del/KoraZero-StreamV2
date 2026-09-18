@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>KoraZero Stream V2</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles/korazero.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container nav">
+      <a class="logo" href="./watch.html" aria-label="KoraZero">Kora<b>Zero</b></a>
+      <span class="badge">Stream V2</span>
+      <span class="nav-note">Clean streaming prototype · isolated from production</span>
+    </div>
+  </header>
+
+  <main class="watch-wrap">
+    <div class="container">
+      <div class="watch-head">
+        <div>
+          <h1 class="watch-title" id="channel-title">البث المباشر</h1>
+          <p class="watch-subtitle">مشغل جديد مستقل — HLS فقط في المتصفح</p>
+        </div>
+        <span class="badge" id="player-state">IDLE</span>
+      </div>
+
+      <div class="layout">
+        <section class="card">
+          <div class="player-shell" id="player-shell">
+            <video id="live-video" controls playsinline preload="metadata"></video>
+            <div class="player-overlay"><span class="player-status" id="player-message">لم يبدأ البث</span></div>
+          </div>
+          <div class="panel-body">
+            <div class="info-grid">
+              <div class="info-item"><small>القناة</small><strong id="channel-id">—</strong></div>
+              <div class="info-item"><small>المحرك</small><strong id="player-engine">—</strong></div>
+              <div class="info-item"><small>المصدر</small><strong>KoraZero HLS</strong></div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="card side-card">
+          <h2>V2 isolation</h2>
+          <p>This page intentionally contains no inherited KoraZero streaming behavior. The browser receives only a V2 playback descriptor and an HLS manifest owned by the new gateway.</p>
+        </aside>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.13/dist/hls.min.js"></script>
+  <script type="module" src="./player/watch-entry.js"></script>
+</body>
+</html>
