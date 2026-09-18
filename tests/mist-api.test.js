@@ -227,3 +227,18 @@ test('Mist API leaves viewer session mode untouched when already configured', as
   assert.deepEqual(commandFrom(transport.calls[0]), { config_backup: true });
   assert.deepEqual(result, { changed: false, previousMode: 10, mode: 10 });
 });
+
+
+test('Mist API lists configured stream names from config backup', async () => {
+  const transport = createFetchRecorder({
+    config_backup: {
+      streams: {
+        'bein-1': { source: 'one' },
+        'iptv-3645': { source: 'two' },
+      },
+    },
+  });
+  const mist = createMistApi({ fetchFn: transport.fetchFn });
+  assert.deepEqual(await mist.listConfiguredStreams(), ['bein-1', 'iptv-3645']);
+  assert.deepEqual(commandFrom(transport.calls[0]), { config_backup: true });
+});
