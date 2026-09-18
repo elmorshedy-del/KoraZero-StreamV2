@@ -282,3 +282,35 @@ export async function runRecoverySmokeTest({
     `Recovery smoke did not restore one upstream pull within ${attempts} attempts; lastActive=${last?.activePulls ?? 'unknown'} lastTotal=${last?.totalPulls ?? 'unknown'}`,
   );
 }
+
+
+export async function runConfiguredRecoverySmokeTest(env = process.env, options = {}) {
+  const sourceControlUrl = String(env.V2_RECOVERY_SOURCE_CONTROL_URL || '').trim();
+  const sourceControlToken = String(env.V2_RECOVERY_SOURCE_CONTROL_TOKEN || '').trim();
+  if (!sourceControlUrl && !sourceControlToken) return null;
+
+  const channelId = String(env.V2_SMOKE_TEST_CHANNEL || '').trim();
+  const hlsBase = String(env.V2_MIST_HLS_INTERNAL_BASE || '').trim();
+  const sourceStatsUrl = String(env.V2_FANOUT_SOURCE_STATS_URL || '').trim();
+  if (!channelId) throw new Error('V2_SMOKE_TEST_CHANNEL is required when recovery smoke is enabled');
+  if (!hlsBase) throw new Error('V2_MIST_HLS_INTERNAL_BASE is required when recovery smoke is enabled');
+  if (!sourceStatsUrl) throw new Error('V2_FANOUT_SOURCE_STATS_URL is required when recovery smoke is enabled');
+  if (!sourceControlUrl) throw new Error('V2_RECOVERY_SOURCE_CONTROL_URL is required when recovery smoke is enabled');
+  if (!sourceControlToken) throw new Error('V2_RECOVERY_SOURCE_CONTROL_TOKEN is required when recovery smoke is enabled');
+
+  const attempts = Number(String(env.V2_RECOVERY_ATTEMPTS || '12').trim());
+  const delayMs = Number(String(env.V2_RECOVERY_DELAY_MS || '500').trim());
+  if (!Number.isInteger(attempts) || attempts < 1) throw new Error('V2_RECOVERY_ATTEMPTS must be an integer >= 1');
+  if (!Number.isFinite(delayMs) || delayMs < 0) throw new Error('V2_RECOVERY_DELAY_MS must be >= 0');
+
+  return runRecoverySmokeTest({
+    channelId,
+    hlsBase,
+    sourceStatsUrl,
+    sourceControlUrl,
+    sourceControlToken,
+    attempts,
+    delayMs,
+    ...options,
+  });
+}
