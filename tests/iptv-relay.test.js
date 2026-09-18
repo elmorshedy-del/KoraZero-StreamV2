@@ -330,3 +330,90 @@ test('relay labels a one-program PAT as SPTS', async () => {
   assert.equal(stats.transportProgramCount, 1);
   assert.equal(stats.transportKind, 'spts');
 });
+
+
+test('catalog mode exposes the provider live catalog without credentials and permits discovered stream ids', async () => {
+  const envCatalog = { ...env, V2_IPTV_CATALOG_MODE: 'true' };
+  const calls = [];
+  const relay = createIptvRelay(envCatalog, {
+    fetchFn: async (url) => {
+      calls.push(url);
+      if (url.includes('action=get_live_streams')) {
+        return new Response(JSON.stringify([{ stream_id: 2449, name: 'beIN Sport 1 HD Q', category_id: '6', tv_archive: 0 }]), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.includes('action=get_live_categories')) {
+        return new Response(JSON.stringify([{ category_id: '6', category_name: 'beIN Sports HD' }]), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.endsWith('/2449.ts')) {
+        return new Response(concat(tsPacket(256, 0), tsPacket(256, 1)), { status: 200, headers: { 'content-type': 'video/mp2t' } });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    },
+  });
+
+  const catalogResponse = await relay.handle({ method: 'GET', pathname: '/catalog' });
+  const catalog = await catalogResponse.json();
+  assert.equal(catalog.channelCount, 1);
+  assert.deepEqual(catalog.channels[0], {
+    streamId: '2449',
+    name: 'beIN Sport 1 HD Q',
+    categoryId: '6',
+    categoryName: 'beIN Sports HD',
+    tvArchive: false,
+    isAdult: false,
+  });
+  assert.equal(JSON.stringify(catalog).includes('user name'), false);
+  assert.equal(JSON.stringify(catalog).includes('p@ss/word'), false);
+
+  const media = await relay.handle({ method: 'GET', pathname: '/live/2449.ts' });
+  assert.equal(media.status, 200);
+  await media.arrayBuffer();
+  assert.equal(calls.filter((url) => url.includes('action=get_live_streams')).length, 1);
+});
+
+test('relay account endpoint returns only sanitized connection status', async () => {
+  const relay = createIptvRelay(env, {
+    fetchFn: async (url) => {
+      assert.equal(url.includes('action='), false);
+      return new Response(JSON.stringify({
+        user_info: {
+          auth: 1,
+          status: 'Active',
+          active_cons: '0',
+          max_connections: '1',
+          allowed_output_formats: ['m3u8', 'ts'],
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    },
+  });
+
+  const response = await relay.handle({ method: 'GET', pathname: '/account' });
+  assert.deepEqual(await response.json(), {
+    auth: 1,
+    status: 'Active',
+    activeConnections: 0,
+    maxConnections: 1,
+    allowedOutputFormats: ['m3u8', 'ts'],
+  });
+});
+
+test('relay can enforce one total provider pull while catalog testing', async () => {
+  const relay = createIptvRelay({
+    ...env,
+    V2_IPTV_ALLOWED_STREAM_IDS: '3974,2454',
+    V2_IPTV_MAX_ACTIVE_PULLS: '1',
+  }, {
+    fetchFn: async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(concat(tsPacket(256, 0), tsPacket(256, 1)));
+      },
+    }), { status: 200, headers: { 'content-type': 'video/mp2t' } }),
+  });
+
+  const first = await relay.handle({ method: 'GET', pathname: '/live/3974.ts' });
+  const second = await relay.handle({ method: 'GET', pathname: '/live/2454.ts' });
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 503);
+  assert.equal(relay.stats().maxConcurrentPulls, 1);
+  await first.body.cancel();
+});
