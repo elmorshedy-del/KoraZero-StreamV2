@@ -10,24 +10,19 @@ function read(path) {
   return readFileSync(join(root, path), 'utf8');
 }
 
-test('synthetic source image generates H264 AAC MPEG-TS over HTTP', () => {
+test('synthetic source image runs a Node HTTP wrapper with ffmpeg installed', () => {
   const path = 'infra/test-source/Dockerfile';
   assert.equal(existsSync(join(root, path)), true, 'synthetic source Dockerfile must exist');
   const dockerfile = read(path);
-  assert.match(dockerfile, /ffmpeg/i);
-  assert.match(dockerfile, /libx264/);
-  assert.match(dockerfile, /-c:a\s+aac/);
-  assert.match(dockerfile, /-f\s+mpegts/);
-  assert.match(dockerfile, /-listen\s+1/);
-  assert.match(dockerfile, /live\.ts/);
+  assert.match(dockerfile, /FROM node:24-alpine/);
+  assert.match(dockerfile, /apk add --no-cache ffmpeg/);
+  assert.match(dockerfile, /COPY infra\/test-source\/server\.mjs/);
+  assert.match(dockerfile, /CMD \["node", "server\.mjs"\]/);
+  assert.doesNotMatch(dockerfile, /-listen\s+1/);
 });
 
 test('synthetic source does not depend on provider credentials or the legacy repo', () => {
   const dockerfile = read('infra/test-source/Dockerfile');
-  assert.doesNotMatch(dockerfile, /xtream|provider|morshlive|username|password/i);
-});
-
-test('synthetic source binds IPv6 so Railway private networking can reach it', () => {
-  const dockerfile = read('infra/test-source/Dockerfile');
-  assert.match(dockerfile, /http:\/\/\[::\]:\$\{PORT\}\/live\.ts/);
+  const server = existsSync(join(root, 'infra/test-source/server.mjs')) ? read('infra/test-source/server.mjs') : '';
+  assert.doesNotMatch(`${dockerfile}\n${server}`, /xtream|provider|morshlive|username|password/i);
 });
