@@ -1,3 +1,5 @@
+import { createProviderHlsTsStream, isHlsResponse } from './provider-hls-source.js';
+
 const VLC_USER_AGENT = 'VLC/3.0.18 LibVLC/3.0.18';
 const TS_PACKET_BYTES = 188;
 const MIST_TIMEOUT_RESET_BYTES = 25_600;
@@ -139,9 +141,26 @@ function normalizePortal(raw) {
 
 function createStreamStats() {
   return {
-    activePulls: 0, totalPulls: 0, providerAttempts: 0, successfulProviderOpens: 0,
-    failedProviderOpens: 0, rejectedConcurrentPulls: 0, realBytes: 0,
-    keepaliveBursts: 0, keepaliveBytes: 0,
+    activePulls: 0,
+    totalPulls: 0,
+    providerAttempts: 0,
+    successfulProviderOpens: 0,
+    failedProviderOpens: 0,
+    rejectedConcurrentPulls: 0,
+    realBytes: 0,
+    keepaliveBursts: 0,
+    keepaliveBytes: 0,
+    transportMode: null,
+    upstreamStatus: null,
+    upstreamContentType: null,
+    firstMediaByteMs: null,
+    playlistFetches: 0,
+    segmentFetches: 0,
+    segmentBytes: 0,
+    lastSegmentStatus: null,
+    lastSegmentContentType: null,
+    lastError: null,
+    lastMediaAt: null,
   };
 }
 
@@ -244,6 +263,23 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
       maxConnections: parseNonNegativeInt(user.max_connections, 0),
       allowedOutputFormats: Array.isArray(user.allowed_output_formats) ? user.allowed_output_formats.map((value) => cleanCatalogText(value, 20)).filter(Boolean) : [],
     };
+  }
+
+  async function waitForProviderSlotFree(signal, timeoutMs = 15_000) {
+    const startedAt = Date.now();
+    while (true) {
+      if (signal?.aborted) {
+        const error = new Error('Provider slot wait aborted');
+        error.name = 'AbortError';
+        throw error;
+      }
+      const status = await accountStatus();
+      if (status.activeConnections === 0) return { ...status, waitMs: Date.now() - startedAt };
+      if (Date.now() - startedAt >= timeoutMs) {
+        throw new Error(`Provider slot did not clear within ${timeoutMs}ms (active=${status.activeConnections}, max=${status.maxConnections})`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
   }
 
   async function isAllowedStreamId(streamId) {
@@ -365,11 +401,57 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
 
       stats.successfulProviderOpens += 1;
       currentStreamStats.successfulProviderOpens += 1;
+      currentStreamStats.upstreamStatus = upstream.status;
+      currentStreamStats.upstreamContentType = upstream.headers.get('content-type') || null;
+      currentStreamStats.lastError = null;
+
       let finalHost = null;
       try { finalHost = upstream.url ? new URL(upstream.url).host : null; } catch {}
       log({ event: 'upstream-open', streamId: requestedStreamId, status: upstream.status, finalHost });
 
-      const reader = upstream.body.getReader();
+      const mediaStartedAt = Date.now();
+      let sourceBody = upstream.body;
+      if (isHlsResponse(upstream)) {
+        currentStreamStats.transportMode = 'hls-to-ts';
+        log({
+          event: 'transport-mode',
+          streamId: requestedStreamId,
+          mode: currentStreamStats.transportMode,
+          upstreamStatus: upstream.status,
+          upstreamContentType: currentStreamStats.upstreamContentType,
+        });
+        sourceBody = await createProviderHlsTsStream({
+          initialResponse: upstream,
+          initialUrl: upstream.url || target,
+          fetchFn,
+          waitForFree: () => waitForProviderSlotFree(controller.signal),
+          signal: controller.signal,
+          userAgent: VLC_USER_AGENT,
+          onPlaylist(meta) {
+            currentStreamStats.playlistFetches += 1;
+            log({ event: 'hls-playlist', streamId: requestedStreamId, ...meta });
+          },
+          onSegment(meta) {
+            currentStreamStats.segmentFetches += 1;
+            currentStreamStats.segmentBytes += meta.bytes;
+            currentStreamStats.lastSegmentStatus = meta.status;
+            currentStreamStats.lastSegmentContentType = meta.contentType;
+            currentStreamStats.lastMediaAt = new Date().toISOString();
+            log({ event: 'hls-segment', streamId: requestedStreamId, ...meta });
+          },
+        });
+      } else {
+        currentStreamStats.transportMode = 'raw-ts';
+        log({
+          event: 'transport-mode',
+          streamId: requestedStreamId,
+          mode: currentStreamStats.transportMode,
+          upstreamStatus: upstream.status,
+          upstreamContentType: currentStreamStats.upstreamContentType,
+        });
+      }
+
+      const reader = sourceBody.getReader();
       const framer = createTsFramer();
       let pendingRead = null;
 
@@ -416,6 +498,10 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
               }
 
               const receivedBytes = value?.byteLength || 0;
+              if (receivedBytes > 0 && currentStreamStats.firstMediaByteMs === null) {
+                currentStreamStats.firstMediaByteMs = Date.now() - mediaStartedAt;
+              }
+              if (receivedBytes > 0) currentStreamStats.lastMediaAt = new Date().toISOString();
               stats.realBytes += receivedBytes;
               currentStreamStats.realBytes += receivedBytes;
               const framed = framer.push(value || new Uint8Array(0));
@@ -445,12 +531,15 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
       return new Response(body, {
         status: 200,
         headers: {
-          'content-type': upstream.headers.get('content-type') || 'video/mp2t',
+          'content-type': 'video/mp2t',
           'cache-control': 'no-store',
           'x-kz-relay': 'iptv',
+          'x-kz-transport': currentStreamStats.transportMode || 'unknown',
         },
       });
     } catch (error) {
+      currentStreamStats.lastError = cleanCatalogText(error?.message || String(error), 240);
+      log({ event: 'upstream-error', streamId: requestedStreamId, error: currentStreamStats.lastError });
       if (stats.lastStatus == null || currentStreamStats.successfulProviderOpens < currentStreamStats.providerAttempts - currentStreamStats.failedProviderOpens) {
         stats.failedProviderOpens += 1;
         currentStreamStats.failedProviderOpens += 1;
