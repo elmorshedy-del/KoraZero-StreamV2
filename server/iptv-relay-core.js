@@ -76,6 +76,46 @@ function createTsFramer() {
   };
 }
 
+function parsePatPrograms(bytes) {
+  const programs = new Map();
+  for (let offset = 0; offset + TS_PACKET_BYTES <= bytes.length; offset += TS_PACKET_BYTES) {
+    const packet = bytes.subarray(offset, offset + TS_PACKET_BYTES);
+    if (packet[0] !== 0x47) continue;
+    const pid = ((packet[1] & 0x1f) << 8) | packet[2];
+    if (pid !== 0 || !(packet[1] & 0x40)) continue;
+
+    const adaptationControl = (packet[3] >> 4) & 0x03;
+    if (adaptationControl === 0 || adaptationControl === 2) continue;
+
+    let payloadOffset = 4;
+    if (adaptationControl === 3) {
+      payloadOffset += 1 + packet[4];
+      if (payloadOffset >= TS_PACKET_BYTES) continue;
+    }
+
+    const pointerField = packet[payloadOffset];
+    const sectionStart = payloadOffset + 1 + pointerField;
+    if (sectionStart + 8 > TS_PACKET_BYTES) continue;
+    if (packet[sectionStart] !== 0x00) continue;
+
+    const sectionLength = ((packet[sectionStart + 1] & 0x0f) << 8) | packet[sectionStart + 2];
+    const sectionEnd = sectionStart + 3 + sectionLength;
+    if (sectionEnd > TS_PACKET_BYTES || sectionLength < 9) continue;
+
+    const programLoopStart = sectionStart + 8;
+    const programLoopEnd = sectionEnd - 4;
+    for (let cursor = programLoopStart; cursor + 4 <= programLoopEnd; cursor += 4) {
+      const programNumber = (packet[cursor] << 8) | packet[cursor + 1];
+      if (programNumber === 0) continue;
+      const pmtPid = ((packet[cursor + 2] & 0x1f) << 8) | packet[cursor + 3];
+      programs.set(programNumber, pmtPid);
+    }
+  }
+  return [...programs.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([programNumber, pmtPid]) => ({ programNumber, pmtPid }));
+}
+
 function required(env, key) {
   const value = typeof env?.[key] === 'string' ? env[key].trim() : '';
   if (!value || value === '__SET_IN_RAILWAY__') throw new Error(`${key} is required`);
@@ -263,6 +303,12 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
               currentStreamStats.realBytes += receivedBytes;
               const framed = framer.push(value || new Uint8Array(0));
               if (framed.length) {
+                const transportPrograms = parsePatPrograms(framed);
+                if (transportPrograms.length) {
+                  currentStreamStats.transportPrograms = transportPrograms;
+                  currentStreamStats.transportProgramCount = transportPrograms.length;
+                  currentStreamStats.transportKind = transportPrograms.length > 1 ? 'mpts' : 'spts';
+                }
                 out.enqueue(framed);
                 return;
               }
