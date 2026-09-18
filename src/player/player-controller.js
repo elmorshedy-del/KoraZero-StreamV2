@@ -14,7 +14,10 @@ export function createPlayerController({ video, hlsFactory, clock = globalThis, 
   let recoveryTimer = null;
   let recoveryAttempts = 0;
   let destroyed = false;
+  let autoplayRequested = false;
+  let playAttempt = 0;
   const listeners = new Set();
+
   let state = {
     status: 'IDLE',
     engine: null,
@@ -28,10 +31,15 @@ export function createPlayerController({ video, hlsFactory, clock = globalThis, 
     setState({ status: 'PLAYING', error: null });
   };
   const onWaiting = () => setState({ status: 'BUFFERING' });
+  const onCanPlay = () => {
+    if (autoplayRequested) void requestPlayback(generation);
+  };
   const onNativeError = () => scheduleRecovery(new Error('Native HLS media error'));
 
   video.addEventListener?.('playing', onPlaying);
   video.addEventListener?.('waiting', onWaiting);
+  video.addEventListener?.('canplay', onCanPlay);
+  video.addEventListener?.('loadedmetadata', onCanPlay);
   video.addEventListener?.('error', onNativeError);
 
   function setState(patch) {
@@ -47,18 +55,93 @@ export function createPlayerController({ video, hlsFactory, clock = globalThis, 
   }
 
   function teardownEngine() {
+    video.pause?.();
+
     if (engine?.kind === 'hls.js') {
       if (engine.errorEvent && engine.errorHandler) {
         engine.instance.off?.(engine.errorEvent, engine.errorHandler);
       }
       engine.instance.destroy();
     }
+
     if (engine?.kind === 'native-hls') {
-      video.pause?.();
       video.removeAttribute?.('src');
       video.load?.();
     }
+
     engine = null;
+  }
+
+  async function playOnce(expectedGeneration) {
+    if (
+      destroyed
+      || expectedGeneration !== generation
+      || !autoplayRequested
+      || typeof video.play !== 'function'
+    ) {
+      return false;
+    }
+
+    const attempt = ++playAttempt;
+    try {
+      const result = video.play();
+      if (result?.then) await result;
+      if (destroyed || expectedGeneration !== generation || attempt !== playAttempt) return false;
+      return true;
+    } catch (error) {
+      if (destroyed || expectedGeneration !== generation || attempt !== playAttempt) return false;
+      throw error;
+    }
+  }
+
+  async function requestPlayback(expectedGeneration) {
+    if (destroyed || expectedGeneration !== generation || !autoplayRequested) return false;
+
+    try {
+      return await playOnce(expectedGeneration);
+    } catch (error) {
+      if (destroyed || expectedGeneration !== generation) return false;
+
+      const blocked = error?.name === 'NotAllowedError';
+      if (blocked && !video.muted) {
+        video.muted = true;
+        if ('defaultMuted' in video) video.defaultMuted = true;
+        try {
+          return await playOnce(expectedGeneration);
+        } catch (mutedError) {
+          if (destroyed || expectedGeneration !== generation) return false;
+          setState({
+            status: 'BUFFERING',
+            error: new Error(`Autoplay retry failed: ${mutedError?.message || String(mutedError)}`),
+          });
+          return false;
+        }
+      }
+
+      // A source may not be ready yet. canplay/loadedmetadata will retry automatically.
+      setState({
+        status: 'BUFFERING',
+        error: new Error(`Playback start pending: ${error?.message || String(error)}`),
+      });
+      return false;
+    }
+  }
+
+  function beginUserPlaybackIntent() {
+    autoplayRequested = true;
+    if ('autoplay' in video) video.autoplay = true;
+    if ('playsInline' in video) video.playsInline = true;
+
+    // Run synchronously from the click handler. On browsers that preserve a
+    // media-element user activation this keeps the element unlocked while
+    // the backend prepares the next source. Failure here is harmless; the
+    // verified source will retry, with muted fallback only if required.
+    if (typeof video.play === 'function' && (engine || video.src)) {
+      try {
+        const result = video.play();
+        result?.catch?.(() => {});
+      } catch {}
+    }
   }
 
   function startEngine(activeDescriptor, expectedGeneration) {
@@ -78,6 +161,7 @@ export function createPlayerController({ video, hlsFactory, clock = globalThis, 
       engine = { kind: 'native-hls' };
       setState({ engine: 'native-hls' });
       video.load?.();
+      if (autoplayRequested) void requestPlayback(expectedGeneration);
       return;
     }
 
@@ -93,6 +177,7 @@ export function createPlayerController({ video, hlsFactory, clock = globalThis, 
       instance.on?.(errorEvent, errorHandler);
       instance.attachMedia(video);
       instance.loadSource(activeDescriptor.manifestUrl);
+      if (autoplayRequested) void requestPlayback(expectedGeneration);
       return;
     }
 
@@ -124,7 +209,7 @@ export function createPlayerController({ video, hlsFactory, clock = globalThis, 
     }, delay);
   }
 
-  function load(nextDescriptor) {
+  function load(nextDescriptor, { autoplay = false } = {}) {
     if (!nextDescriptor?.channelId || !nextDescriptor?.manifestUrl) {
       throw new TypeError('channelId and manifestUrl are required');
     }
@@ -134,12 +219,16 @@ export function createPlayerController({ video, hlsFactory, clock = globalThis, 
     teardownEngine();
     recoveryAttempts = 0;
     descriptor = { ...nextDescriptor };
+    autoplayRequested = Boolean(autoplay);
+    if ('autoplay' in video) video.autoplay = autoplayRequested;
+    if ('playsInline' in video) video.playsInline = true;
     generation += 1;
     startEngine(descriptor, generation);
   }
 
   function stop() {
     cancelRecovery();
+    autoplayRequested = false;
     teardownEngine();
     descriptor = null;
     recoveryAttempts = 0;
@@ -153,6 +242,8 @@ export function createPlayerController({ video, hlsFactory, clock = globalThis, 
     destroyed = true;
     video.removeEventListener?.('playing', onPlaying);
     video.removeEventListener?.('waiting', onWaiting);
+    video.removeEventListener?.('canplay', onCanPlay);
+    video.removeEventListener?.('loadedmetadata', onCanPlay);
     video.removeEventListener?.('error', onNativeError);
   }
 
@@ -167,5 +258,12 @@ export function createPlayerController({ video, hlsFactory, clock = globalThis, 
     return () => listeners.delete(listener);
   }
 
-  return { load, stop, destroy, getState, subscribe };
+  return {
+    load,
+    stop,
+    destroy,
+    getState,
+    subscribe,
+    beginUserPlaybackIntent,
+  };
 }
