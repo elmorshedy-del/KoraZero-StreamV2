@@ -63,17 +63,25 @@ export function createGatewayService({
       });
     }
 
-    if (activeCatalogChannel) {
-      sourceSupervisor?.disarm(activeCatalogChannel.mistChannelId);
-      await mist.deleteStream(activeCatalogChannel.mistChannelId);
+    const configured = typeof mist.listConfiguredStreams === 'function'
+      ? await mist.listConfiguredStreams()
+      : [];
+    for (const configuredName of configured) {
+      if (configuredName.startsWith('iptv-') && configuredName !== mistChannelId) {
+        await mist.deleteStream(configuredName);
+      }
+    }
+
+    if (activeCatalogChannel?.mistChannelId && activeCatalogChannel.mistChannelId !== mistChannelId) {
       activeCatalogChannel = null;
     }
 
     await catalogClient.waitForFreeSlot();
 
-    const source = `${relay}/live/${encodeURIComponent(streamId)}.ts`;
-    await mist.addStream(mistChannelId, source, { always_on: true });
-    sourceSupervisor?.arm(mistChannelId);
+    if (!configured.includes(mistChannelId)) {
+      const source = `${relay}/live/${encodeURIComponent(streamId)}.ts`;
+      await mist.addStream(mistChannelId, source, { always_on: true });
+    }
     activeCatalogChannel = { streamId, mistChannelId };
 
     return descriptor(mistChannelId, {
