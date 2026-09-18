@@ -29,7 +29,7 @@ button, input { font: inherit; }
 .watch-title { margin: 0; font-size: clamp(1.55rem, 3vw, 2.35rem); }
 .watch-subtitle { margin: 6px 0 0; color: var(--muted); }
 .badge { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 12px; border-radius: 999px; background: rgba(24,226,154,.09); color: #087953; border: 1px solid rgba(24,226,154,.24); font-size: .8rem; font-weight: 700; }
-.layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 390px; gap: 18px; align-items: start; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
 .player-shell { position: relative; background: #000; aspect-ratio: 16/9; display: grid; place-items: center; }
 .player-shell video { width: 100%; height: 100%; background: #000; display: block; }
@@ -52,3 +52,19 @@ button, input { font: inherit; }
   .info-grid { grid-template-columns: 1fr; }
   .nav-note { display: none; }
 }
+
+.catalog-card { overflow: hidden; }
+.catalog-head { padding: 16px 16px 10px; border-bottom: 1px solid var(--border); }
+.catalog-head h2 { margin: 0; font-size: 1rem; }
+.catalog-head p { margin: 5px 0 0; color: var(--muted); font-size: .8rem; }
+.catalog-controls { display: grid; gap: 8px; padding: 12px; border-bottom: 1px solid var(--border); }
+.catalog-controls input, .catalog-controls select { width: 100%; min-height: 42px; border: 1px solid var(--border); border-radius: 10px; padding: 0 11px; background: white; color: var(--text); font: inherit; }
+.catalog-list { max-height: min(68vh, 720px); overflow-y: auto; padding: 6px; }
+.channel-row { width: 100%; display: grid; gap: 4px; text-align: start; border: 0; border-bottom: 1px solid var(--border); background: transparent; padding: 11px 10px; cursor: pointer; color: var(--text); }
+.channel-row:last-child { border-bottom: 0; }
+.channel-row:hover { background: var(--surface-2); }
+.channel-row.is-active { background: rgba(24,226,154,.08); }
+.channel-row strong { font-size: .88rem; line-height: 1.35; }
+.channel-row span { color: var(--muted); font-size: .72rem; direction: ltr; text-align: start; }
+.catalog-more { width: calc(100% - 24px); min-height: 42px; margin: 0 12px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); color: var(--text); font-weight: 700; cursor: pointer; }
+@media (max-width: 900px) { .catalog-list { max-height: 52vh; } }
