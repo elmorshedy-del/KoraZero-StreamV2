@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRuntime } from '../server/runtime-config.js';
 
-test('runtime config composes registry, Mist endpoint and public HLS base from environment', () => {
+test('runtime config composes registry, Mist endpoint and public HLS base from environment', async () => {
   const runtime = createRuntime({
     V2_CHANNELS_JSON: JSON.stringify({
       'bein-1': { source: 'https://provider.invalid/private.ts' },
@@ -16,7 +16,7 @@ test('runtime config composes registry, Mist endpoint and public HLS base from e
   assert.equal(runtime.port, 8787);
   assert.equal(runtime.internalToken, 'secret');
   assert.equal(typeof runtime.sourceSupervisor.start, 'function');
-  assert.deepEqual(runtime.gateway.playback('bein-1'), {
+  assert.deepEqual(await runtime.gateway.playback('bein-1'), {
     channelId: 'bein-1',
     manifestUrl: 'https://stream-v2.example/hls/bein-1/index.m3u8',
   });
