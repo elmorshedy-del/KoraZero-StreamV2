@@ -19,6 +19,8 @@ const PAGE_SIZE = 150;
 let catalog = [];
 let visibleLimit = PAGE_SIZE;
 let selectedStreamId = null;
+let activeChannel = null;
+let selectionGeneration = 0;
 
 const controller = createPlayerController({ video, hlsFactory: createBrowserHlsFactory() });
 
@@ -60,15 +62,22 @@ function renderCatalog() {
   moreEl.hidden = shown.length >= filtered.length;
 }
 
-async function selectChannel(channel, { updateUrl = true } = {}) {
+async function selectChannel(channel, { updateUrl = true, userInitiated = true } = {}) {
+  const myGeneration = ++selectionGeneration;
   selectedStreamId = channel.streamId;
   renderCatalog();
   titleEl.textContent = channel.name;
-  messageEl.textContent = 'جاري تبديل القناة…';
+  messageEl.textContent = activeChannel ? 'جاري تبديل القناة…' : 'جاري تشغيل القناة…';
   if (diagnosticEl) diagnosticEl.textContent = 'VERIFYING…';
-  controller.stop();
+
+  // Keep the current picture alive while the next source is prepared.
+  // This also runs synchronously from a real click to preserve the browser's
+  // media user-activation when possible.
+  if (userInitiated) controller.beginUserPlaybackIntent();
+
   try {
     const descriptor = await fetchPlaybackDescriptor(channel.streamId);
+    if (myGeneration !== selectionGeneration) return;
     if (diagnosticEl) {
       const d = descriptor.diagnostics || {};
       const kb = Number.isFinite(Number(d.segmentBytes)) ? Math.round(Number(d.segmentBytes) / 1024) : null;
@@ -79,7 +88,10 @@ async function selectChannel(channel, { updateUrl = true } = {}) {
         ? `VERIFIED · ${mode}${kb !== null ? ` · ${kb} KB` : ''}${ms !== null ? ` · ${ms} ms` : ''}${attempt}`
         : 'UNVERIFIED';
     }
-    controller.load(descriptor);
+    controller.load(descriptor, { autoplay: true });
+    activeChannel = channel;
+    selectedStreamId = channel.streamId;
+    renderCatalog();
     if (updateUrl) {
       const url = new URL(location.href);
       url.searchParams.set('channel', channel.streamId);
@@ -87,8 +99,19 @@ async function selectChannel(channel, { updateUrl = true } = {}) {
       history.replaceState(null, '', url);
     }
   } catch (error) {
+    if (myGeneration !== selectionGeneration) return;
     const errorMessage = error instanceof Error ? error.message : String(error);
-    messageEl.textContent = errorMessage;
+
+    // A failed switch should not destroy the channel that was already playing.
+    if (activeChannel) {
+      selectedStreamId = activeChannel.streamId;
+      titleEl.textContent = activeChannel.name;
+      renderCatalog();
+      messageEl.textContent = `تعذر التبديل: ${errorMessage}`;
+    } else {
+      messageEl.textContent = errorMessage;
+    }
+
     if (diagnosticEl) {
       try {
         const response = await fetch(`/api/diagnostics/${encodeURIComponent(channel.streamId)}`, {
@@ -132,11 +155,11 @@ try {
   await loadCatalog();
   if (initialChannelId && /^\d+$/.test(initialChannelId)) {
     const channel = catalog.find((item) => item.streamId === initialChannelId);
-    if (channel) await selectChannel(channel, { updateUrl: false });
+    if (channel) await selectChannel(channel, { updateUrl: false, userInitiated: false });
     else messageEl.textContent = 'القناة غير موجودة في الكتالوج الحالي.';
   } else if (initialChannelId) {
     if (initialTitle) titleEl.textContent = initialTitle;
-    controller.load(await fetchPlaybackDescriptor(initialChannelId));
+    controller.load(await fetchPlaybackDescriptor(initialChannelId), { autoplay: true });
   }
 } catch (error) {
   countEl.textContent = 'تعذر تحميل الكتالوج';
