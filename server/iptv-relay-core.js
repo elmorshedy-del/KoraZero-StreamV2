@@ -97,6 +97,7 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
         headers: {
           'User-Agent': VLC_USER_AGENT,
           Accept: 'video/mp2t,*/*',
+          Range: 'bytes=0-',
         },
         redirect: 'follow',
         signal: controller.signal,

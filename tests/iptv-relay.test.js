@@ -36,6 +36,7 @@ test('IPTV relay GET follows redirects and streams bytes with one provider pull'
   assert.equal(call.options.method, 'GET');
   assert.equal(call.options.redirect, 'follow');
   assert.equal(call.options.headers['User-Agent'], 'VLC/3.0.18 LibVLC/3.0.18');
+  assert.equal(call.options.headers.Range, 'bytes=0-');
   assert.match(call.url, /\/live\/user%20name\/p%40ss%2Fword\/3974\.ts$/);
   assert.equal(relay.stats().activePulls, 1);
   const bytes = new Uint8Array(await response.arrayBuffer());
