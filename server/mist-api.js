@@ -107,6 +107,10 @@ export function createMistApi({ endpoint = DEFAULT_ENDPOINT, username = '', pass
       return command({ deletestream: name });
     },
 
+    async nukeStream(name) {
+      return command({ nuke_stream: name });
+    },
+
     async getStream(name) {
       const response = await command({
         active_streams: {
