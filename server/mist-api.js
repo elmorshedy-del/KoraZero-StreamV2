@@ -84,8 +84,20 @@ export function createMistApi({ endpoint = DEFAULT_ENDPOINT, username = '', pass
     return { changed: true, port: Number(port) };
   }
 
+  async function ensureHlsProtocol() {
+    const backup = await command({ config_backup: true });
+    const protocols = Array.isArray(backup?.config_backup?.protocols)
+      ? backup.config_backup.protocols
+      : [];
+    const existing = protocols.find((protocol) => protocol?.connector === 'HLS');
+    if (existing) return { changed: false };
+    await command({ addprotocol: { connector: 'HLS' } });
+    return { changed: true };
+  }
+
   return Object.freeze({
     ensureHttpProtocol,
+    ensureHlsProtocol,
 
     async addStream(name, source) {
       return command({ addstream: { [name]: { source } } });
