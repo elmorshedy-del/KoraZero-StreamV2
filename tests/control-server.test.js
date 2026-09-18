@@ -9,6 +9,14 @@ function createGatewayFake() {
   const calls = [];
   return {
     calls,
+    async catalog() {
+      calls.push(['catalog']);
+      return {
+        channelCount: 1,
+        categories: [{ categoryId: '6', name: 'beIN Sports HD', count: 1 }],
+        channels: [{ streamId: '2449', name: 'beIN Sport 1 HD Q', categoryId: '6', categoryName: 'beIN Sports HD' }],
+      };
+    },
     playback(channelId) {
       calls.push(['playback', channelId]);
       if (channelId === 'missing') throw new Error('Unknown channel: missing');
@@ -112,5 +120,20 @@ test('static serving rejects paths outside the V2 source root', async () => {
   await withServer(async ({ base }) => {
     const response = await fetch(`${base}/../package.json`);
     assert.equal(response.status, 404);
+  });
+});
+
+
+test('public catalog returns sanitized provider channel metadata', async () => {
+  await withServer(async ({ base, gateway }) => {
+    const response = await fetch(`${base}/api/catalog`);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.channelCount, 1);
+    assert.equal(body.channels[0].streamId, '2449');
+    assert.equal(body.channels[0].name, 'beIN Sport 1 HD Q');
+    assert.deepEqual(gateway.calls, [['catalog']]);
+    assert.equal(JSON.stringify(body).includes('username'), false);
+    assert.equal(JSON.stringify(body).includes('password'), false);
   });
 });
