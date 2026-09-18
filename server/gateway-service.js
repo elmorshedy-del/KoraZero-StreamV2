@@ -1,3 +1,5 @@
+import { probeHlsPlayback } from './playback-probe.js';
+
 function trimBase(value) {
   return String(value || '').replace(/\/+$/, '');
 }
@@ -11,6 +13,9 @@ export function createGatewayService({
   sourceSupervisor = null,
   catalogClient = null,
   relayBase = null,
+  fetchFn = globalThis.fetch,
+  playbackProbeFn = probeHlsPlayback,
+  sleepFn = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 }) {
   if (!registry) throw new Error('gateway requires registry');
   if (!mist) throw new Error('gateway requires Mist API');
@@ -20,6 +25,8 @@ export function createGatewayService({
 
   let activeCatalogChannel = null;
   let switchTail = Promise.resolve();
+  let attemptSequence = 0;
+  const latestAttempts = new Map();
 
   function staticChannel(channelId) {
     const entry = registry.get(channelId);
@@ -40,6 +47,33 @@ export function createGatewayService({
     return descriptor(channelId);
   }
 
+  function beginAttempt(streamId, name) {
+    const attempt = {
+      attemptId: `${Date.now()}-${++attemptSequence}`,
+      streamId,
+      name,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      phase: 'catalog-resolved',
+      ok: null,
+      error: null,
+      events: [],
+      verification: null,
+    };
+    latestAttempts.set(streamId, attempt);
+    return attempt;
+  }
+
+  function record(attempt, phase, details = {}) {
+    attempt.phase = phase;
+    attempt.events.push({
+      at: new Date().toISOString(),
+      phase,
+      ...details,
+    });
+    if (attempt.events.length > 60) attempt.events.splice(0, attempt.events.length - 60);
+  }
+
   async function catalogEntry(streamId) {
     if (!catalogClient || !relay || !CATALOG_STREAM_ID.test(streamId)) {
       throw new Error(`Unknown channel: ${streamId}`);
@@ -50,46 +84,113 @@ export function createGatewayService({
     return entry;
   }
 
+  async function waitForMistInputExit(channelId, timeoutMs = 10_000) {
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      const status = await mist.getStream(channelId);
+      if (!status.active || Number(status.inputs || 0) === 0) return status;
+      if (Date.now() >= deadline) {
+        throw new Error(`Mist input did not stop for ${channelId}`);
+      }
+      await sleepFn(150);
+    }
+  }
+
+  async function cleanDynamicMistStreams(attempt) {
+    const configured = typeof mist.listConfiguredStreams === 'function'
+      ? await mist.listConfiguredStreams()
+      : [];
+    const dynamic = configured.filter((name) => name.startsWith('iptv-'));
+    record(attempt, 'mist-cleanup-start', { configuredDynamic: dynamic.length });
+
+    for (const channelId of dynamic) {
+      record(attempt, 'mist-nuke', { channelId });
+      await mist.nukeStream(channelId);
+      await mist.deleteStream(channelId);
+      await waitForMistInputExit(channelId);
+      record(attempt, 'mist-stopped', { channelId });
+    }
+
+    activeCatalogChannel = null;
+    return dynamic;
+  }
+
+  async function failAttempt(attempt, error, mistChannelId = null) {
+    attempt.ok = false;
+    attempt.error = error instanceof Error ? error.message : String(error);
+    attempt.finishedAt = new Date().toISOString();
+    record(attempt, 'failed', { error: attempt.error });
+
+    if (mistChannelId) {
+      try { await mist.nukeStream(mistChannelId); } catch {}
+      try { await mist.deleteStream(mistChannelId); } catch {}
+      try { await waitForMistInputExit(mistChannelId, 5_000); } catch {}
+    }
+    activeCatalogChannel = null;
+  }
+
   async function switchCatalogChannel(streamId) {
     const entry = await catalogEntry(streamId);
     const mistChannelId = `iptv-${streamId}`;
+    const attempt = beginAttempt(streamId, entry.name);
 
-    if (activeCatalogChannel?.mistChannelId === mistChannelId) {
-      return descriptor(mistChannelId, {
+    try {
+      await cleanDynamicMistStreams(attempt);
+
+      record(attempt, 'provider-slot-wait');
+      const slot = await catalogClient.waitForFreeSlot({ timeoutMs: 30_000, pollMs: 250 });
+      record(attempt, 'provider-slot-free', {
+        activeConnections: slot.activeConnections,
+        maxConnections: slot.maxConnections,
+      });
+
+      const source = `${relay}/live/${encodeURIComponent(streamId)}.ts`;
+      record(attempt, 'mist-add', { channelId: mistChannelId });
+      await mist.addStream(mistChannelId, source, { always_on: true });
+      activeCatalogChannel = { streamId, mistChannelId };
+
+      const result = descriptor(mistChannelId, {
         streamId,
         name: entry.name,
         categoryId: entry.categoryId,
         categoryName: entry.categoryName,
       });
+
+      record(attempt, 'hls-verify-start', { manifestUrl: result.manifestUrl });
+      const verification = await playbackProbeFn({
+        manifestUrl: result.manifestUrl,
+        fetchFn,
+      });
+      attempt.verification = verification;
+      attempt.ok = true;
+      attempt.finishedAt = new Date().toISOString();
+      record(attempt, 'verified', {
+        segmentBytes: verification.segmentBytes,
+        totalMs: verification.totalMs,
+      });
+
+      let relayStats = null;
+      try {
+        relayStats = await catalogClient.stats();
+      } catch {}
+      const streamRelayStats = relayStats?.streams?.[streamId] || null;
+
+      return {
+        ...result,
+        verified: true,
+        diagnostics: {
+          attemptId: attempt.attemptId,
+          segmentBytes: verification.segmentBytes,
+          verificationMs: verification.totalMs,
+          transportMode: streamRelayStats?.transportMode || null,
+          playlistFetches: streamRelayStats?.playlistFetches ?? null,
+          segmentFetches: streamRelayStats?.segmentFetches ?? null,
+        },
+      };
+    } catch (error) {
+      await failAttempt(attempt, error, mistChannelId);
+      throw new Error(`Playback verification failed at ${attempt.phase}: ${attempt.error}`);
     }
-
-    const configured = typeof mist.listConfiguredStreams === 'function'
-      ? await mist.listConfiguredStreams()
-      : [];
-    for (const configuredName of configured) {
-      if (configuredName.startsWith('iptv-') && configuredName !== mistChannelId) {
-        await mist.deleteStream(configuredName);
-      }
-    }
-
-    if (activeCatalogChannel?.mistChannelId && activeCatalogChannel.mistChannelId !== mistChannelId) {
-      activeCatalogChannel = null;
-    }
-
-    await catalogClient.waitForFreeSlot();
-
-    if (!configured.includes(mistChannelId)) {
-      const source = `${relay}/live/${encodeURIComponent(streamId)}.ts`;
-      await mist.addStream(mistChannelId, source, { always_on: true });
-    }
-    activeCatalogChannel = { streamId, mistChannelId };
-
-    return descriptor(mistChannelId, {
-      streamId,
-      name: entry.name,
-      categoryId: entry.categoryId,
-      categoryName: entry.categoryName,
-    });
   }
 
   function queueCatalogSwitch(streamId) {
@@ -105,6 +206,10 @@ export function createGatewayService({
     async catalog() {
       if (!catalogClient) throw new Error('IPTV catalog is unavailable');
       return catalogClient.list();
+    },
+
+    diagnostic(streamId) {
+      return latestAttempts.get(String(streamId)) || null;
     },
 
     async playback(channelId) {
