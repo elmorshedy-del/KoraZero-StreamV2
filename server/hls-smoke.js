@@ -11,7 +11,13 @@ function smokeUrl(hlsBase, channelId) {
 }
 
 function playablePlaylist(body) {
-  return body.startsWith('#EXTM3U') && !body.includes('#EXT-X-ERROR:');
+  const lines = String(body || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const hasSegmentDuration = lines.some((line) => line.startsWith('#EXTINF:'));
+  const hasSegmentUri = lines.some((line) => !line.startsWith('#'));
+  return lines[0] === '#EXTM3U'
+    && !lines.some((line) => line.startsWith('#EXT-X-ERROR:'))
+    && hasSegmentDuration
+    && hasSegmentUri;
 }
 
 export async function runHlsSmokeTest({
@@ -19,8 +25,10 @@ export async function runHlsSmokeTest({
   hlsBase,
   attempts = 8,
   delayMs = 1500,
+  timeoutMs = 5000,
   fetchFn = globalThis.fetch,
   sleepFn = sleep,
+  abortSignalFactory = (ms) => AbortSignal.timeout(ms),
 }) {
   if (!channelId) throw new Error('HLS smoke requires channelId');
   if (!hlsBase) throw new Error('HLS smoke requires hlsBase');
@@ -31,7 +39,10 @@ export async function runHlsSmokeTest({
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      const response = await fetchFn(url, { cache: 'no-store' });
+      const response = await fetchFn(url, {
+        cache: 'no-store',
+        signal: abortSignalFactory(timeoutMs),
+      });
       const body = await response.text();
       const contentType = response.headers?.get?.('content-type') ?? null;
       if (response.ok && playablePlaylist(body)) {

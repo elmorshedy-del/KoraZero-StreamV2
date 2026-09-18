@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runConfiguredHlsSmokeTest, runHlsSmokeTest } from '../server/hls-smoke.js';
 
-function response({ status = 200, contentType = 'application/vnd.apple.mpegurl', body = '#EXTM3U\n' } = {}) {
+function response({ status = 200, contentType = 'application/vnd.apple.mpegurl', body = '#EXTM3U\n#EXTINF:6.0,\nsegment.ts\n' } = {}) {
   return {
     ok: status >= 200 && status < 300,
     status,
@@ -15,7 +15,7 @@ test('HLS smoke retries Mist error playlists and succeeds on a real playlist', a
   const calls = [];
   const replies = [
     response({ body: '#EXTM3U\n#EXT-X-ERROR: Stream open failed\n#EXT-X-ENDLIST\n' }),
-    response({ body: '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\nsegment.ts\n' }),
+    response({ body: '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n#EXTINF:6.0,\nsegment.ts\n' }),
   ];
   const delays = [];
   const result = await runHlsSmokeTest({
@@ -37,6 +37,51 @@ test('HLS smoke retries Mist error playlists and succeeds on a real playlist', a
   assert.equal(result.channelId, 'test-hls');
   assert.match(result.contentType, /mpegurl/);
   assert.ok(result.bytes > 0);
+});
+
+test('HLS smoke rejects an empty media playlist with no actual segment', async () => {
+  let calls = 0;
+  await assert.rejects(
+    () => runHlsSmokeTest({
+      channelId: 'test-hls',
+      hlsBase: 'http://mist/hls',
+      attempts: 1,
+      fetchFn: async () => {
+        calls += 1;
+        return response({
+          body: '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n#EXT-X-ENDLIST\n',
+        });
+      },
+      sleepFn: async () => {},
+    }),
+    /HLS smoke failed/i,
+  );
+  assert.equal(calls, 1);
+});
+
+test('HLS smoke gives every media fetch a hard timeout signal', async () => {
+  const timeoutSentinel = { aborted: false };
+  const timeoutCalls = [];
+  const fetchOptions = [];
+  const result = await runHlsSmokeTest({
+    channelId: 'test-hls',
+    hlsBase: 'http://mist/hls',
+    attempts: 1,
+    timeoutMs: 4321,
+    abortSignalFactory: (ms) => {
+      timeoutCalls.push(ms);
+      return timeoutSentinel;
+    },
+    fetchFn: async (_url, options) => {
+      fetchOptions.push(options);
+      return response({ body: '#EXTM3U\n#EXTINF:6.0,\nsegment.ts\n' });
+    },
+    sleepFn: async () => {},
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(timeoutCalls, [4321]);
+  assert.equal(fetchOptions[0].signal, timeoutSentinel);
 });
 
 test('HLS smoke fails after bounded attempts when no playable playlist appears', async () => {
