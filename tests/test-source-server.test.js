@@ -77,3 +77,20 @@ test('GET /live.ts flushes HTTP headers before ffmpeg emits its first media byte
     }
   });
 });
+
+
+test('GET /stats reports source pull counters without starting ffmpeg', async () => {
+  const fake = fakeSpawnRecorder();
+  await withServer(fake.spawnFn, async (base) => {
+    const response = await fetch(`${base}/stats`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') || '', /application\/json/);
+    assert.deepEqual(await response.json(), {
+      activePulls: 0,
+      totalPulls: 0,
+      maxConcurrentPulls: 0,
+      headRequests: 0,
+    });
+  });
+  assert.equal(fake.calls.length, 0);
+});
