@@ -10,14 +10,29 @@ function smokeUrl(hlsBase, channelId) {
   return `${normalizeBase(hlsBase)}/${encodeURIComponent(channelId)}/index.m3u8`;
 }
 
+function playlistLines(body) {
+  return String(body || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
 function playablePlaylist(body) {
-  const lines = String(body || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const lines = playlistLines(body);
   const hasSegmentDuration = lines.some((line) => line.startsWith('#EXTINF:'));
   const hasSegmentUri = lines.some((line) => !line.startsWith('#'));
   return lines[0] === '#EXTM3U'
     && !lines.some((line) => line.startsWith('#EXT-X-ERROR:'))
     && hasSegmentDuration
     && hasSegmentUri;
+}
+
+function masterVariantUri(body) {
+  const lines = playlistLines(body);
+  if (lines[0] !== '#EXTM3U' || lines.some((line) => line.startsWith('#EXT-X-ERROR:'))) return null;
+  for (let i = 0; i < lines.length - 1; i += 1) {
+    if (lines[i].startsWith('#EXT-X-STREAM-INF:') && !lines[i + 1].startsWith('#')) {
+      return lines[i + 1];
+    }
+  }
+  return null;
 }
 
 export async function runHlsSmokeTest({
@@ -53,6 +68,26 @@ export async function runHlsSmokeTest({
           contentType,
           bytes: Buffer.byteLength(body),
         };
+      }
+      if (response.ok) {
+        const variant = masterVariantUri(body);
+        if (variant) {
+          const childUrl = new URL(variant, url).toString();
+          const childResponse = await fetchFn(childUrl, {
+            cache: 'no-store',
+            signal: abortSignalFactory(timeoutMs),
+          });
+          const childBody = await childResponse.text();
+          if (childResponse.ok && playablePlaylist(childBody)) {
+            return {
+              ok: true,
+              channelId,
+              status: childResponse.status,
+              contentType: childResponse.headers?.get?.('content-type') ?? contentType,
+              bytes: Buffer.byteLength(body) + Buffer.byteLength(childBody),
+            };
+          }
+        }
       }
       last = `HTTP ${response.status}${body.includes('#EXT-X-ERROR:') ? ' with Mist HLS error playlist' : ''}`;
     } catch (error) {

@@ -124,3 +124,30 @@ test('configured HLS smoke uses private base and logical test channel', async ()
   assert.deepEqual(urls, ['http://v2-mist.railway.internal:8080/hls/test-hls/index.m3u8']);
   assert.equal(result.ok, true);
 });
+
+
+test('HLS smoke follows a valid master playlist and validates its child media playlist', async () => {
+  const urls = [];
+  const replies = [
+    response({
+      body: '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2500000,CODECS="avc1.64001f,mp4a.40.2"\nvideo/index.m3u8\n',
+    }),
+    response({
+      body: '#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6.0,\nsegment001.ts\n',
+    }),
+  ];
+
+  const result = await runHlsSmokeTest({
+    channelId: 'test-ts',
+    hlsBase: 'http://mist/hls',
+    attempts: 1,
+    fetchFn: async (url) => { urls.push(url); return replies.shift(); },
+    sleepFn: async () => {},
+  });
+
+  assert.deepEqual(urls, [
+    'http://mist/hls/test-ts/index.m3u8',
+    'http://mist/hls/test-ts/video/index.m3u8',
+  ]);
+  assert.equal(result.ok, true);
+});
