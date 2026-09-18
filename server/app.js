@@ -14,6 +14,8 @@ export function createApp(env = process.env, { fetchFn = globalThis.fetch, stati
   async function bootstrap({ activateChannel = null } = {}) {
     const httpProtocol = await runtime.mist.ensureHttpProtocol({ port: 8080 });
     const hlsProtocol = await runtime.mist.ensureHlsProtocol();
+    // 10 = stream + client token. Exclude reverse-proxy hop IP from viewer identity.
+    const viewerSessionMode = await runtime.mist.ensureViewerSessionMode({ mode: 10 });
     for (const entry of runtime.registry.entries()) {
       await runtime.mist.addStream(entry.channelId, entry.source);
     }
@@ -21,6 +23,7 @@ export function createApp(env = process.env, { fetchFn = globalThis.fetch, stati
     return {
       httpProtocol,
       hlsProtocol,
+      viewerSessionMode,
       channels: runtime.registry.entries().map((entry) => entry.channelId),
       activateChannel,
     };
