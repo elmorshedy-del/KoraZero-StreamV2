@@ -84,16 +84,17 @@ export function createGatewayService({
     return entry;
   }
 
-  async function waitForMistInputExit(channelId, timeoutMs = 10_000) {
-    const deadline = Date.now() + timeoutMs;
-    while (true) {
-      const status = await mist.getStream(channelId);
-      if (!status.active || Number(status.inputs || 0) === 0) return status;
-      if (Date.now() >= deadline) {
-        throw new Error(`Mist input did not stop for ${channelId}`);
+  async function observeMistInputExit(channelId, timeoutMs = 1_500) {
+    const startedAt = Date.now();
+    let lastStatus = null;
+    while (Date.now() - startedAt < timeoutMs) {
+      lastStatus = await mist.getStream(channelId);
+      if (!lastStatus.active || Number(lastStatus.inputs || 0) === 0) {
+        return { stopped: true, waitMs: Date.now() - startedAt, status: lastStatus };
       }
       await sleepFn(150);
     }
+    return { stopped: false, waitMs: Date.now() - startedAt, status: lastStatus };
   }
 
   async function cleanDynamicMistStreams(attempt) {
@@ -107,8 +108,13 @@ export function createGatewayService({
       record(attempt, 'mist-nuke', { channelId });
       await mist.nukeStream(channelId);
       await mist.deleteStream(channelId);
-      await waitForMistInputExit(channelId);
-      record(attempt, 'mist-stopped', { channelId });
+      const exit = await observeMistInputExit(channelId);
+      record(attempt, exit.stopped ? 'mist-stopped' : 'mist-stop-stale', {
+        channelId,
+        waitMs: exit.waitMs,
+        active: Boolean(exit.status?.active),
+        inputs: Number(exit.status?.inputs || 0),
+      });
     }
 
     activeCatalogChannel = null;
@@ -124,7 +130,15 @@ export function createGatewayService({
     if (mistChannelId) {
       try { await mist.nukeStream(mistChannelId); } catch {}
       try { await mist.deleteStream(mistChannelId); } catch {}
-      try { await waitForMistInputExit(mistChannelId, 5_000); } catch {}
+      try {
+        const exit = await observeMistInputExit(mistChannelId, 1_500);
+        record(attempt, exit.stopped ? 'failed-cleanup-stopped' : 'failed-cleanup-stale', {
+          channelId: mistChannelId,
+          waitMs: exit.waitMs,
+          active: Boolean(exit.status?.active),
+          inputs: Number(exit.status?.inputs || 0),
+        });
+      } catch {}
     }
     activeCatalogChannel = null;
   }
