@@ -3,9 +3,32 @@ import assert from 'node:assert/strict';
 import { createPlayerController } from '../src/player/player-controller.js';
 import { createBrowserHlsFactory } from '../src/player/hls-adapter.js';
 
-function createVideo({ nativeHls = false } = {}) {
+function createVideo({ nativeHls = false, playPlan = [] } = {}) {
   const events = new Map();
-  return { src: '', loadCalls: 0, pauseCalls: 0, canPlayType(type) { return nativeHls && type === 'application/vnd.apple.mpegurl' ? 'probably' : ''; }, addEventListener(name, fn) { events.set(name, fn); }, removeEventListener(name) { events.delete(name); }, emit(name, detail) { events.get(name)?.(detail); }, load() { this.loadCalls += 1; }, pause() { this.pauseCalls += 1; }, removeAttribute(name) { if (name === 'src') this.src = ''; } };
+  const planned = [...playPlan];
+  return {
+    src: '',
+    muted: false,
+    defaultMuted: false,
+    autoplay: false,
+    playsInline: false,
+    loadCalls: 0,
+    pauseCalls: 0,
+    playCalls: 0,
+    canPlayType(type) { return nativeHls && type === 'application/vnd.apple.mpegurl' ? 'probably' : ''; },
+    addEventListener(name, fn) { events.set(name, fn); },
+    removeEventListener(name) { events.delete(name); },
+    emit(name, detail) { events.get(name)?.(detail); },
+    load() { this.loadCalls += 1; },
+    pause() { this.pauseCalls += 1; },
+    play() {
+      this.playCalls += 1;
+      const next = planned.length ? planned.shift() : { ok: true };
+      if (next?.error) return Promise.reject(next.error);
+      return Promise.resolve();
+    },
+    removeAttribute(name) { if (name === 'src') this.src = ''; },
+  };
 }
 
 function createHlsFactory({ supported = true } = {}) {
@@ -63,4 +86,69 @@ test('browser hls adapter wraps an injected Hls class without global player logi
   const factory = createBrowserHlsFactory(FakeHls);
   assert.equal(factory.isSupported(), true);
   assert.ok(factory() instanceof FakeHls);
+});
+
+
+test('autoplay starts a verified native-HLS channel without a second tap', async () => {
+  const video = createVideo({ nativeHls: true });
+  const player = createPlayerController({ video, hlsFactory: createHlsFactory() });
+
+  player.beginUserPlaybackIntent();
+  player.load(
+    { channelId: 'iptv-3645', manifestUrl: 'https://v2.example/hls/iptv-3645/index.m3u8' },
+    { autoplay: true },
+  );
+
+  await Promise.resolve();
+  assert.equal(video.src, 'https://v2.example/hls/iptv-3645/index.m3u8');
+  assert.equal(video.autoplay, true);
+  assert.equal(video.playsInline, true);
+  assert.ok(video.playCalls >= 1);
+  assert.notEqual(player.getState().status, 'STOPPED');
+});
+
+test('Safari-style audible autoplay rejection falls back to muted playback automatically', async () => {
+  const blocked = new Error('The request is not allowed by the user agent');
+  blocked.name = 'NotAllowedError';
+  const video = createVideo({
+    nativeHls: true,
+    playPlan: [{ error: blocked }, { ok: true }],
+  });
+  const player = createPlayerController({ video, hlsFactory: createHlsFactory() });
+
+  player.load(
+    { channelId: 'iptv-3645', manifestUrl: 'https://v2.example/hls/iptv-3645/index.m3u8' },
+    { autoplay: true },
+  );
+
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(video.playCalls, 2);
+  assert.equal(video.muted, true);
+  assert.equal(video.defaultMuted, true);
+  assert.notEqual(player.getState().status, 'STOPPED');
+});
+
+test('switching channels replaces the source and automatically plays the replacement', async () => {
+  const video = createVideo({ nativeHls: true });
+  const player = createPlayerController({ video, hlsFactory: createHlsFactory() });
+
+  player.load(
+    { channelId: 'iptv-3645', manifestUrl: 'https://v2.example/hls/iptv-3645/index.m3u8' },
+    { autoplay: true },
+  );
+  await Promise.resolve();
+  const firstPlayCalls = video.playCalls;
+
+  player.beginUserPlaybackIntent();
+  player.load(
+    { channelId: 'iptv-3644', manifestUrl: 'https://v2.example/hls/iptv-3644/index.m3u8' },
+    { autoplay: true },
+  );
+  await Promise.resolve();
+
+  assert.equal(video.src, 'https://v2.example/hls/iptv-3644/index.m3u8');
+  assert.equal(player.getState().channelId, 'iptv-3644');
+  assert.ok(video.playCalls > firstPlayCalls);
+  assert.notEqual(player.getState().status, 'STOPPED');
 });
