@@ -1,5 +1,9 @@
 import { createApp } from './app.js';
-import { runConfiguredFanoutSmokeTest, runConfiguredHlsSmokeTest } from './hls-smoke.js';
+import {
+  runConfiguredFanoutSmokeTest,
+  runConfiguredHlsSmokeTest,
+  runConfiguredRecoverySmokeTest,
+} from './hls-smoke.js';
 
 const app = createApp();
 const smokeChannel = String(process.env.V2_SMOKE_TEST_CHANNEL || '').trim() || null;
@@ -13,6 +17,11 @@ if (smoke) {
 const fanout = await runConfiguredFanoutSmokeTest(process.env);
 if (fanout) {
   console.log(`V2 fanout smoke passed channel=${fanout.channelId} viewers=${fanout.viewers} upstreamPulls=${fanout.upstreamPulls} totalPulls=${fanout.totalPulls}`);
+}
+
+const recovery = await runConfiguredRecoverySmokeTest(process.env);
+if (recovery) {
+  console.log(`V2 recovery smoke passed channel=${recovery.channelId} reconnectPulls=${recovery.reconnectPulls} upstreamPulls=${recovery.upstreamPulls} totalPulls=${recovery.totalPulls}`);
 }
 
 app.server.listen(app.port, '0.0.0.0', () => {
