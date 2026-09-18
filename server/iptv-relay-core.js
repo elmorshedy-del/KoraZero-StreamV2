@@ -3,6 +3,7 @@ const TS_PACKET_BYTES = 188;
 const MIST_TIMEOUT_RESET_BYTES = 25_600;
 const NULL_BURST_PACKETS = 140;
 const DEFAULT_IDLE_KEEPALIVE_MS = 2_000;
+const DEFAULT_CATALOG_TTL_MS = 60_000;
 
 function concatBytes(left, right) {
   if (!left?.length) return right;
@@ -136,17 +137,121 @@ function normalizePortal(raw) {
   return url.toString().replace(/\/$/, '');
 }
 
+function createStreamStats() {
+  return {
+    activePulls: 0, totalPulls: 0, providerAttempts: 0, successfulProviderOpens: 0,
+    failedProviderOpens: 0, rejectedConcurrentPulls: 0, realBytes: 0,
+    keepaliveBursts: 0, keepaliveBytes: 0,
+  };
+}
+
+function cleanCatalogText(value, maxLength = 240) {
+  return String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+function parseNonNegativeInt(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch, log = () => {}, idleKeepaliveMs = DEFAULT_IDLE_KEEPALIVE_MS } = {}) {
   const portal = normalizePortal(required(env, 'V2_IPTV_PORTAL_URL'));
   const username = required(env, 'V2_IPTV_USERNAME');
   const password = required(env, 'V2_IPTV_PASSWORD');
-  const allowedRaw = typeof env.V2_IPTV_ALLOWED_STREAM_IDS === 'string'
-    ? env.V2_IPTV_ALLOWED_STREAM_IDS.trim()
-    : '';
-  const fallbackStreamId = allowedRaw ? '' : required(env, 'V2_IPTV_TEST_STREAM_ID');
-  const allowedStreamIds = new Set((allowedRaw || fallbackStreamId).split(',').map((value) => value.trim()).filter(Boolean));
-  if (!allowedStreamIds.size || [...allowedStreamIds].some((streamId) => !/^\d+$/.test(streamId))) throw new Error('Configured IPTV stream ids must be numeric');
-  const streamStats = Object.fromEntries([...allowedStreamIds].map((streamId) => [streamId, { activePulls: 0, totalPulls: 0, providerAttempts: 0, successfulProviderOpens: 0, failedProviderOpens: 0, rejectedConcurrentPulls: 0, realBytes: 0, keepaliveBursts: 0, keepaliveBytes: 0 }]));
+  const catalogMode = env.V2_IPTV_CATALOG_MODE === 'true';
+  const catalogTtlMs = Math.max(5_000, parseNonNegativeInt(env.V2_IPTV_CATALOG_TTL_MS, DEFAULT_CATALOG_TTL_MS));
+  const maxActivePulls = parseNonNegativeInt(env.V2_IPTV_MAX_ACTIVE_PULLS, 0);
+  const allowedRaw = typeof env.V2_IPTV_ALLOWED_STREAM_IDS === 'string' ? env.V2_IPTV_ALLOWED_STREAM_IDS.trim() : '';
+  const fallbackRaw = typeof env.V2_IPTV_TEST_STREAM_ID === 'string' ? env.V2_IPTV_TEST_STREAM_ID.trim() : '';
+  const staticIdsRaw = allowedRaw || fallbackRaw;
+  const allowedStreamIds = new Set(staticIdsRaw.split(',').map((value) => value.trim()).filter(Boolean));
+  if ([...allowedStreamIds].some((streamId) => !/^\d+$/.test(streamId))) throw new Error('Configured IPTV stream ids must be numeric');
+  if (!catalogMode && !allowedStreamIds.size) throw new Error('At least one IPTV stream id or catalog mode is required');
+  const streamStats = Object.fromEntries([...allowedStreamIds].map((streamId) => [streamId, createStreamStats()]));
+
+  let catalogCache = null;
+  let catalogPromise = null;
+
+  function getStreamStats(streamId) {
+    if (!streamStats[streamId]) streamStats[streamId] = createStreamStats();
+    return streamStats[streamId];
+  }
+
+  function playerApiUrl(action = null) {
+    const url = new URL(`${portal}/player_api.php`);
+    url.searchParams.set('username', username);
+    url.searchParams.set('password', password);
+    if (action) url.searchParams.set('action', action);
+    return url.toString();
+  }
+
+  async function fetchProviderJson(action = null) {
+    const response = await fetchFn(playerApiUrl(action), {
+      method: 'GET',
+      headers: { 'User-Agent': VLC_USER_AGENT, Accept: 'application/json,*/*' },
+      redirect: 'follow',
+    });
+    if (!response?.ok) throw new Error(`Provider API ${action || 'account'} failed with HTTP ${response?.status ?? 'unknown'}`);
+    return response.json();
+  }
+
+  async function loadCatalog() {
+    const now = Date.now();
+    if (catalogCache && catalogCache.expiresAt > now) return catalogCache.value;
+    if (catalogPromise) return catalogPromise;
+    catalogPromise = (async () => {
+      const [streamsResult, categoriesResult] = await Promise.allSettled([
+        fetchProviderJson('get_live_streams'),
+        fetchProviderJson('get_live_categories'),
+      ]);
+      if (streamsResult.status !== 'fulfilled' || !Array.isArray(streamsResult.value)) throw new Error('Provider live catalog is unavailable');
+      const rawCategories = categoriesResult.status === 'fulfilled' && Array.isArray(categoriesResult.value) ? categoriesResult.value : [];
+      const categoryById = new Map(rawCategories
+        .map((row) => [String(row?.category_id ?? '').trim(), cleanCatalogText(row?.category_name)])
+        .filter(([id, name]) => /^\d+$/.test(id) && name));
+      const channels = streamsResult.value.map((row) => {
+        const streamId = String(row?.stream_id ?? '').trim();
+        if (!/^\d+$/.test(streamId)) return null;
+        const categoryId = String(row?.category_id ?? '').trim();
+        return {
+          streamId,
+          name: cleanCatalogText(row?.name) || `Stream ${streamId}`,
+          categoryId: /^\d+$/.test(categoryId) ? categoryId : '',
+          categoryName: categoryById.get(categoryId) || 'Other',
+          tvArchive: Number(row?.tv_archive || 0) === 1,
+          isAdult: Number(row?.is_adult || 0) === 1,
+        };
+      }).filter(Boolean);
+      const counts = new Map();
+      for (const channel of channels) counts.set(channel.categoryId, (counts.get(channel.categoryId) || 0) + 1);
+      const categories = [...categoryById.entries()].map(([categoryId, name]) => ({
+        categoryId, name, count: counts.get(categoryId) || 0,
+      })).filter((category) => category.count > 0);
+      const value = { fetchedAt: new Date().toISOString(), channelCount: channels.length, categories, channels };
+      catalogCache = { value, ids: new Set(channels.map((channel) => channel.streamId)), expiresAt: Date.now() + catalogTtlMs };
+      return value;
+    })().finally(() => { catalogPromise = null; });
+    return catalogPromise;
+  }
+
+  async function accountStatus() {
+    const payload = await fetchProviderJson();
+    const user = payload?.user_info || {};
+    return {
+      auth: Number(user.auth || 0),
+      status: cleanCatalogText(user.status, 40),
+      activeConnections: parseNonNegativeInt(user.active_cons, 0),
+      maxConnections: parseNonNegativeInt(user.max_connections, 0),
+      allowedOutputFormats: Array.isArray(user.allowed_output_formats) ? user.allowed_output_formats.map((value) => cleanCatalogText(value, 20)).filter(Boolean) : [],
+    };
+  }
+
+  async function isAllowedStreamId(streamId) {
+    if (allowedStreamIds.has(streamId)) return true;
+    if (!catalogMode) return false;
+    await loadCatalog();
+    return catalogCache?.ids?.has(streamId) === true;
+  }
 
   const stats = {
     activePulls: 0,
@@ -179,11 +284,23 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
         headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
       });
     }
+    if (pathname === '/catalog' && method === 'GET') {
+      return new Response(JSON.stringify(await loadCatalog()), {
+        status: 200,
+        headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+      });
+    }
+    if (pathname === '/account' && method === 'GET') {
+      return new Response(JSON.stringify(await accountStatus()), {
+        status: 200,
+        headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+      });
+    }
 
     const match = pathname.match(/^\/live\/(\d+)\.ts$/);
     const requestedStreamId = match?.[1] || null;
-    if (!requestedStreamId || !allowedStreamIds.has(requestedStreamId)) return new Response('Not found', { status: 404 });
-    const currentStreamStats = streamStats[requestedStreamId];
+    if (!requestedStreamId || !(await isAllowedStreamId(requestedStreamId))) return new Response('Not found', { status: 404 });
+    const currentStreamStats = getStreamStats(requestedStreamId);
 
     if (method === 'HEAD') {
       return new Response(null, {
@@ -196,7 +313,7 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
     }
     if (method !== 'GET') return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
 
-    if (currentStreamStats.activePulls >= 1) {
+    if ((maxActivePulls > 0 && stats.activePulls >= maxActivePulls) || currentStreamStats.activePulls >= 1) {
       stats.rejectedConcurrentPulls += 1;
       currentStreamStats.rejectedConcurrentPulls += 1;
       return new Response('Upstream pull already active', {
