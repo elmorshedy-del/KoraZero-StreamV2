@@ -1,6 +1,7 @@
 import { createChannelRegistry } from './channel-registry.js';
 import { createMistApi } from './mist-api.js';
 import { createGatewayService } from './gateway-service.js';
+import { createIptvCatalogClient } from './iptv-catalog-client.js';
 import { createSourceSupervisor } from './source-supervisor.js';
 
 function requireEnv(env, key) {
@@ -34,8 +35,10 @@ export function createRuntime(env = process.env, { fetchFn = globalThis.fetch } 
   }
   const port = Number(env.PORT || 8787);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be a valid TCP port');
+  const relayBase = (env.V2_IPTV_RELAY_BASE || 'http://v2-iptv-relay.railway.internal:8080').trim();
 
   const registry = createChannelRegistry(channels);
+  const catalogClient = createIptvCatalogClient({ baseUrl: relayBase, fetchFn });
   const mist = createMistApi({
     endpoint: mistEndpoint,
     username: mistUsername,
@@ -58,6 +61,8 @@ export function createRuntime(env = process.env, { fetchFn = globalThis.fetch } 
     mist,
     publicHlsBase,
     sourceSupervisor,
+    catalogClient,
+    relayBase,
   });
 
   return Object.freeze({
