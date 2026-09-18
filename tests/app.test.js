@@ -67,7 +67,7 @@ test('app bootstrap ensures the MistServer HTTP and HLS outputs before serving v
     const command = JSON.parse(new URLSearchParams(options.body).get('command'));
     commands.push(command);
     if (command.config_backup) {
-      return { ok: true, status: 200, async json() { return { config_backup: { protocols: [] } }; } };
+      return { ok: true, status: 200, async json() { return { config_backup: { protocols: [], config: { sessionViewerMode: 10 } } }; } };
     }
     return { ok: true, status: 200, async json() { return {}; } };
   };
@@ -83,6 +83,7 @@ test('app bootstrap ensures the MistServer HTTP and HLS outputs before serving v
     { addprotocol: { connector: 'HTTP', port: 8080 } },
     { config_backup: true },
     { addprotocol: { connector: 'HLS' } },
+    { config_backup: true },
   ]);
 });
 
@@ -92,7 +93,7 @@ test('app bootstrap registers configured channels after ensuring media outputs',
     const command = JSON.parse(new URLSearchParams(options.body).get('command'));
     commands.push(command);
     if (command.config_backup) {
-      return { ok: true, status: 200, async json() { return { config_backup: { protocols: [{ connector: 'HTTP', port: 8080 }, { connector: 'HLS' }] } }; } };
+      return { ok: true, status: 200, async json() { return { config_backup: { protocols: [{ connector: 'HTTP', port: 8080 }, { connector: 'HLS' }], config: { sessionViewerMode: 10 } } }; } };
     }
     return { ok: true, status: 200, async json() { return {}; } };
   };
@@ -108,6 +109,7 @@ test('app bootstrap registers configured channels after ensuring media outputs',
   assert.deepEqual(commands, [
     { config_backup: true },
     { config_backup: true },
+    { config_backup: true },
     { addstream: { 'test-hls': { source: 'https://test.invalid/master.m3u8' } } },
   ]);
 });
@@ -121,7 +123,7 @@ test('app bootstrap enables HLS output after HTTP before registering channels', 
     if (command.config_backup) {
       configReads += 1;
       const protocols = configReads === 1 ? [] : [{ connector: 'HTTP', port: 8080 }];
-      return { ok: true, status: 200, async json() { return { config_backup: { protocols } }; } };
+      return { ok: true, status: 200, async json() { return { config_backup: { protocols, config: { sessionViewerMode: 10 } } }; } };
     }
     return { ok: true, status: 200, async json() { return {}; } };
   };
@@ -139,6 +141,7 @@ test('app bootstrap enables HLS output after HTTP before registering channels', 
     { addprotocol: { connector: 'HTTP', port: 8080 } },
     { config_backup: true },
     { addprotocol: { connector: 'HLS' } },
+    { config_backup: true },
     { addstream: { 'test-hls': { source: 'https://test.invalid/master.m3u8' } } },
   ]);
 });
@@ -153,7 +156,7 @@ test('bootstrap can explicitly warm one smoke channel after lazy registration', 
         ok: true,
         status: 200,
         async json() {
-          return { config_backup: { protocols: [{ connector: 'HTTP', port: 8080 }, { connector: 'HLS' }] } };
+          return { config_backup: { protocols: [{ connector: 'HTTP', port: 8080 }, { connector: 'HLS' }], config: { sessionViewerMode: 10 } } };
         },
       };
     }
