@@ -17,7 +17,22 @@ export function createMistApi({ endpoint = DEFAULT_ENDPOINT, fetchFn = globalThi
     return response.json();
   }
 
+  async function ensureHttpProtocol({ port = 8080 } = {}) {
+    const backup = await command({ config_backup: true });
+    const protocols = Array.isArray(backup?.config_backup?.protocols)
+      ? backup.config_backup.protocols
+      : [];
+    const existing = protocols.find((protocol) =>
+      protocol?.connector === 'HTTP' && Number(protocol?.port ?? 8080) === Number(port)
+    );
+    if (existing) return { changed: false, port: Number(port) };
+    await command({ addprotocol: { connector: 'HTTP', port: Number(port) } });
+    return { changed: true, port: Number(port) };
+  }
+
   return Object.freeze({
+    ensureHttpProtocol,
+
     async addStream(name, source) {
       return command({ addstream: { [name]: { source } } });
     },

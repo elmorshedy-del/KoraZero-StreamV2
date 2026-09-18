@@ -61,3 +61,28 @@ test('createApp composes the disposable site, public descriptor and authenticate
     await new Promise((resolve, reject) => app.server.close((error) => error ? reject(error) : resolve()));
   }
 });
+
+test('app bootstrap ensures the MistServer HTTP output before serving viewers', async () => {
+  const commands = [];
+  const fetchFn = async (_url, options) => {
+    const command = JSON.parse(new URLSearchParams(options.body).get('command'));
+    commands.push(command);
+    if (command.config_backup) {
+      return { ok: true, status: 200, async json() { return { config_backup: { protocols: [] } }; } };
+    }
+    return { ok: true, status: 200, async json() { return {}; } };
+  };
+  const app = createApp({
+    V2_CHANNELS_JSON: '{}',
+    V2_INTERNAL_TOKEN: 'secret',
+    V2_PUBLIC_HLS_BASE: 'https://media.example/hls',
+    V2_MIST_API_ENDPOINT: 'http://mist.internal:4242/api2',
+  }, { fetchFn });
+
+  await app.bootstrap();
+
+  assert.deepEqual(commands, [
+    { config_backup: true },
+    { addprotocol: { connector: 'HTTP', port: 8080 } },
+  ]);
+});

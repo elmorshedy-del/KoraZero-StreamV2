@@ -11,8 +11,13 @@ export function createApp(env = process.env, { fetchFn = globalThis.fetch, stati
     internalToken: runtime.internalToken,
     staticRoot,
   });
+  async function bootstrap() {
+    return runtime.mist.ensureHttpProtocol({ port: 8080 });
+  }
+
   return Object.freeze({
     port: runtime.port,
+    bootstrap,
     server,
     gateway: runtime.gateway,
   });
