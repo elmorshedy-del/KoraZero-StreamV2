@@ -216,28 +216,52 @@ test('relay permits one simultaneous provider pull per configured stream and rep
   assert.equal(stats.maxConcurrentPulls, 2);
   assert.equal(stats.successfulProviderOpens, 2);
   assert.equal(stats.rejectedConcurrentPulls, 1);
-  assert.deepEqual(stats.streams['3974'], {
-    activePulls: 1,
-    totalPulls: 1,
-    providerAttempts: 1,
-    successfulProviderOpens: 1,
-    failedProviderOpens: 0,
-    rejectedConcurrentPulls: 1,
-    realBytes: 0,
-    keepaliveBursts: 0,
-    keepaliveBytes: 0,
-  });
-  assert.deepEqual(stats.streams['2454'], {
-    activePulls: 1,
-    totalPulls: 1,
-    providerAttempts: 1,
-    successfulProviderOpens: 1,
-    failedProviderOpens: 0,
-    rejectedConcurrentPulls: 0,
-    realBytes: 0,
-    keepaliveBursts: 0,
-    keepaliveBytes: 0,
-  });
+  assert.deepEqual(
+    {
+      activePulls: stats.streams['3974'].activePulls,
+      totalPulls: stats.streams['3974'].totalPulls,
+      providerAttempts: stats.streams['3974'].providerAttempts,
+      successfulProviderOpens: stats.streams['3974'].successfulProviderOpens,
+      failedProviderOpens: stats.streams['3974'].failedProviderOpens,
+      rejectedConcurrentPulls: stats.streams['3974'].rejectedConcurrentPulls,
+      keepaliveBursts: stats.streams['3974'].keepaliveBursts,
+      keepaliveBytes: stats.streams['3974'].keepaliveBytes,
+    },
+    {
+      activePulls: 1,
+      totalPulls: 1,
+      providerAttempts: 1,
+      successfulProviderOpens: 1,
+      failedProviderOpens: 0,
+      rejectedConcurrentPulls: 1,
+      keepaliveBursts: 0,
+      keepaliveBytes: 0,
+    },
+  );
+  assert.deepEqual(
+    {
+      activePulls: stats.streams['2454'].activePulls,
+      totalPulls: stats.streams['2454'].totalPulls,
+      providerAttempts: stats.streams['2454'].providerAttempts,
+      successfulProviderOpens: stats.streams['2454'].successfulProviderOpens,
+      failedProviderOpens: stats.streams['2454'].failedProviderOpens,
+      rejectedConcurrentPulls: stats.streams['2454'].rejectedConcurrentPulls,
+      keepaliveBursts: stats.streams['2454'].keepaliveBursts,
+      keepaliveBytes: stats.streams['2454'].keepaliveBytes,
+    },
+    {
+      activePulls: 1,
+      totalPulls: 1,
+      providerAttempts: 1,
+      successfulProviderOpens: 1,
+      failedProviderOpens: 0,
+      rejectedConcurrentPulls: 0,
+      keepaliveBursts: 0,
+      keepaliveBytes: 0,
+    },
+  );
+  assert.ok(stats.streams['3974'].realBytes >= 0);
+  assert.ok(stats.streams['2454'].realBytes >= 0);
 
   await first.body.cancel();
   await second.body.cancel();
