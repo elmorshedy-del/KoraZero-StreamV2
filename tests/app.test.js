@@ -41,7 +41,6 @@ test('createApp composes the disposable site, public descriptor and authenticate
   try {
     let response = await fetch(`${base}/`);
     assert.equal(response.status, 200);
-
     response = await fetch(`${base}/api/playback/bein-1`);
     assert.deepEqual(await response.json(), {
       channelId: 'bein-1',
@@ -55,14 +54,14 @@ test('createApp composes the disposable site, public descriptor and authenticate
     });
     assert.equal(response.status, 200);
     assert.deepEqual(transport.commands, [{
-      addstream: { 'bein-1': { source: 'https://provider.invalid/private.ts' } },
+      addstream: { 'bein-1': { source: 'https://provider.invalid/private.ts', always_on: true } },
     }]);
   } finally {
     await new Promise((resolve, reject) => app.server.close((error) => error ? reject(error) : resolve()));
   }
 });
 
-test('app bootstrap ensures the MistServer HTTP output before serving viewers', async () => {
+test('app bootstrap ensures the MistServer HTTP and HLS outputs before serving viewers', async () => {
   const commands = [];
   const fetchFn = async (_url, options) => {
     const command = JSON.parse(new URLSearchParams(options.body).get('command'));
@@ -78,22 +77,22 @@ test('app bootstrap ensures the MistServer HTTP output before serving viewers', 
     V2_PUBLIC_HLS_BASE: 'https://media.example/hls',
     V2_MIST_API_ENDPOINT: 'http://mist.internal:4242/api2',
   }, { fetchFn });
-
   await app.bootstrap();
-
   assert.deepEqual(commands, [
     { config_backup: true },
     { addprotocol: { connector: 'HTTP', port: 8080 } },
+    { config_backup: true },
+    { addprotocol: { connector: 'HLS' } },
   ]);
 });
 
-test('app bootstrap registers configured channels after ensuring HTTP output', async () => {
+test('app bootstrap registers configured channels after ensuring media outputs', async () => {
   const commands = [];
   const fetchFn = async (_url, options) => {
     const command = JSON.parse(new URLSearchParams(options.body).get('command'));
     commands.push(command);
     if (command.config_backup) {
-      return { ok: true, status: 200, async json() { return { config_backup: { protocols: [{ connector: 'HTTP', port: 8080 }] } }; } };
+      return { ok: true, status: 200, async json() { return { config_backup: { protocols: [{ connector: 'HTTP', port: 8080 }, { connector: 'HLS' }] } }; } };
     }
     return { ok: true, status: 200, async json() { return {}; } };
   };
@@ -105,11 +104,72 @@ test('app bootstrap registers configured channels after ensuring HTTP output', a
     V2_PUBLIC_HLS_BASE: 'https://media.example/hls',
     V2_MIST_API_ENDPOINT: 'http://mist.internal:4242/api2',
   }, { fetchFn });
-
   await app.bootstrap();
-
   assert.deepEqual(commands, [
     { config_backup: true },
+    { config_backup: true },
     { addstream: { 'test-hls': { source: 'https://test.invalid/master.m3u8' } } },
+  ]);
+});
+
+test('app bootstrap enables HLS output after HTTP before registering channels', async () => {
+  const commands = [];
+  let configReads = 0;
+  const fetchFn = async (_url, options) => {
+    const command = JSON.parse(new URLSearchParams(options.body).get('command'));
+    commands.push(command);
+    if (command.config_backup) {
+      configReads += 1;
+      const protocols = configReads === 1 ? [] : [{ connector: 'HTTP', port: 8080 }];
+      return { ok: true, status: 200, async json() { return { config_backup: { protocols } }; } };
+    }
+    return { ok: true, status: 200, async json() { return {}; } };
+  };
+  const app = createApp({
+    V2_CHANNELS_JSON: JSON.stringify({
+      'test-hls': { source: 'https://test.invalid/master.m3u8' },
+    }),
+    V2_INTERNAL_TOKEN: 'secret',
+    V2_PUBLIC_HLS_BASE: 'https://media.example/hls',
+    V2_MIST_API_ENDPOINT: 'http://mist.internal:4242/api2',
+  }, { fetchFn });
+  await app.bootstrap();
+  assert.deepEqual(commands, [
+    { config_backup: true },
+    { addprotocol: { connector: 'HTTP', port: 8080 } },
+    { config_backup: true },
+    { addprotocol: { connector: 'HLS' } },
+    { addstream: { 'test-hls': { source: 'https://test.invalid/master.m3u8' } } },
+  ]);
+});
+
+test('bootstrap can explicitly warm one smoke channel after lazy registration', async () => {
+  const commands = [];
+  const fetchFn = async (_url, options) => {
+    const command = JSON.parse(new URLSearchParams(options.body).get('command'));
+    commands.push(command);
+    if (command.config_backup) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { config_backup: { protocols: [{ connector: 'HTTP', port: 8080 }, { connector: 'HLS' }] } };
+        },
+      };
+    }
+    return { ok: true, status: 200, async json() { return {}; } };
+  };
+  const app = createApp({
+    V2_CHANNELS_JSON: JSON.stringify({
+      'test-ts': { source: 'https-ts://source.example/live.ts' },
+    }),
+    V2_INTERNAL_TOKEN: 'secret',
+    V2_PUBLIC_HLS_BASE: 'https://media.example/hls',
+  }, { fetchFn });
+  await app.bootstrap({ activateChannel: 'test-ts' });
+  const addCommands = commands.filter((command) => command.addstream);
+  assert.deepEqual(addCommands, [
+    { addstream: { 'test-ts': { source: 'https-ts://source.example/live.ts' } } },
+    { addstream: { 'test-ts': { source: 'https-ts://source.example/live.ts', always_on: true } } },
   ]);
 });

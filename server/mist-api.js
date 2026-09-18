@@ -99,8 +99,8 @@ export function createMistApi({ endpoint = DEFAULT_ENDPOINT, username = '', pass
     ensureHttpProtocol,
     ensureHlsProtocol,
 
-    async addStream(name, source) {
-      return command({ addstream: { [name]: { source } } });
+    async addStream(name, source, options = {}) {
+      return command({ addstream: { [name]: { ...options, source } } });
     },
 
     async deleteStream(name) {

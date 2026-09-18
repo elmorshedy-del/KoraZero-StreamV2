@@ -11,13 +11,19 @@ export function createApp(env = process.env, { fetchFn = globalThis.fetch, stati
     internalToken: runtime.internalToken,
     staticRoot,
   });
-  async function bootstrap() {
+  async function bootstrap({ activateChannel = null } = {}) {
     const httpProtocol = await runtime.mist.ensureHttpProtocol({ port: 8080 });
     const hlsProtocol = await runtime.mist.ensureHlsProtocol();
     for (const entry of runtime.registry.entries()) {
       await runtime.mist.addStream(entry.channelId, entry.source);
     }
-    return { httpProtocol, hlsProtocol, channels: runtime.registry.entries().map((entry) => entry.channelId) };
+    if (activateChannel) await runtime.gateway.activate(activateChannel);
+    return {
+      httpProtocol,
+      hlsProtocol,
+      channels: runtime.registry.entries().map((entry) => entry.channelId),
+      activateChannel,
+    };
   }
 
   return Object.freeze({

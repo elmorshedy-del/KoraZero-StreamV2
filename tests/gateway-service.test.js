@@ -7,8 +7,8 @@ function createMistFake() {
   const calls = [];
   return {
     calls,
-    async addStream(name, source) {
-      calls.push(['addStream', name, source]);
+    async addStream(name, source, options = {}) {
+      calls.push(['addStream', name, source, options]);
       return {};
     },
     async deleteStream(name) {
@@ -38,8 +38,11 @@ function fixture() {
 test('activate configures MistServer exactly once for the logical channel and returns browser-safe playback', async () => {
   const { gateway, mist } = fixture();
   const result = await gateway.activate('bein-1');
-  assert.deepEqual(mist.calls, [['addStream', 'bein-1', 'https://provider.invalid/private-source.ts']]);
-  assert.deepEqual(result, { channelId: 'bein-1', manifestUrl: 'https://stream-v2.example/hls/bein-1/index.m3u8' });
+  assert.deepEqual(mist.calls, [['addStream', 'bein-1', 'https://provider.invalid/private-source.ts', { always_on: true }]]);
+  assert.deepEqual(result, {
+    channelId: 'bein-1',
+    manifestUrl: 'https://stream-v2.example/hls/bein-1/index.m3u8',
+  });
   assert.equal(JSON.stringify(result).includes('provider.invalid'), false);
 });
 
@@ -47,14 +50,21 @@ test('playback descriptor never activates or exposes the provider source', () =>
   const { gateway, mist } = fixture();
   const result = gateway.playback('bein-1');
   assert.deepEqual(mist.calls, []);
-  assert.deepEqual(result, { channelId: 'bein-1', manifestUrl: 'https://stream-v2.example/hls/bein-1/index.m3u8' });
+  assert.deepEqual(result, {
+    channelId: 'bein-1',
+    manifestUrl: 'https://stream-v2.example/hls/bein-1/index.m3u8',
+  });
   assert.equal(Object.hasOwn(result, 'source'), false);
 });
 
 test('status returns MistServer runtime state without provider source', async () => {
   const { gateway } = fixture();
   const result = await gateway.status('bein-1');
-  assert.deepEqual(result, { channelId: 'bein-1', active: true, viewers: 2, inputs: 1, outputs: 2, tracks: 2, status: 'online', health: null, manifestUrl: 'https://stream-v2.example/hls/bein-1/index.m3u8' });
+  assert.deepEqual(result, {
+    channelId: 'bein-1', active: true, viewers: 2, inputs: 1, outputs: 2, tracks: 2,
+    status: 'online', health: null,
+    manifestUrl: 'https://stream-v2.example/hls/bein-1/index.m3u8',
+  });
 });
 
 test('stop removes only the requested stream', async () => {

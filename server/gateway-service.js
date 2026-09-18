@@ -27,7 +27,7 @@ export function createGatewayService({ registry, mist, publicHlsBase }) {
 
     async activate(channelId) {
       const entry = channel(channelId);
-      await mist.addStream(channelId, entry.source);
+      await mist.addStream(channelId, entry.source, { always_on: true });
       return playback(channelId);
     },
 
