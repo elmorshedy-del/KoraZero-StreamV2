@@ -15,3 +15,19 @@ test('startup runs the configured fanout smoke before opening the control listen
     'fanout smoke must finish before the public listener opens',
   );
 });
+
+
+test('startup runs configured recovery smoke after fanout and before opening the listener', () => {
+  const source = readFileSync(indexPath, 'utf8');
+  assert.match(source, /runConfiguredRecoverySmokeTest/);
+  assert.match(source, /await\s+runConfiguredRecoverySmokeTest\(process\.env\)/);
+  assert.match(source, /V2 recovery smoke passed/);
+  assert.ok(
+    source.indexOf('runConfiguredFanoutSmokeTest(process.env)') < source.indexOf('runConfiguredRecoverySmokeTest(process.env)'),
+    'recovery smoke should run after fanout smoke',
+  );
+  assert.ok(
+    source.indexOf('runConfiguredRecoverySmokeTest(process.env)') < source.indexOf('app.server.listen'),
+    'recovery smoke must finish before the public listener opens',
+  );
+});
