@@ -25,6 +25,7 @@ function fixture(statuses, { now = 0 } = {}) {
     registry,
     mist,
     unhealthyThreshold: 2,
+    nativeRecoveryGraceMs: 0,
     baseBackoffMs: 2000,
     maxBackoffMs: 8000,
     nowFn: () => clock,
@@ -195,6 +196,7 @@ test('supervisor emits recovery phase timings around nuke and re-arm', async () 
     registry,
     mist,
     unhealthyThreshold: 2,
+    nativeRecoveryGraceMs: 0,
     nowFn: () => now,
     onEvent(event) { events.push(event); },
   });
@@ -242,6 +244,7 @@ test('recovery waits for a stale nuked Mist input to exit before re-arming', asy
     registry,
     mist,
     unhealthyThreshold: 2,
+    nativeRecoveryGraceMs: 0,
     inputExitPollMs: 50,
     inputExitTimeoutMs: 500,
     sleepFn: async (ms) => {

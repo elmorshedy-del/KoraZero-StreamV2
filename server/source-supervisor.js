@@ -2,6 +2,8 @@ export function createSourceSupervisor({
   registry,
   mist,
   unhealthyThreshold = 2,
+  nativeRecoveryGraceMs = 5000,
+  postRearmGraceMs = 8000,
   baseBackoffMs = 2000,
   maxBackoffMs = 8000,
   nowFn = Date.now,
@@ -10,7 +12,7 @@ export function createSourceSupervisor({
   clearIntervalFn = globalThis.clearInterval,
   sleepFn = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   inputExitPollMs = 100,
-  inputExitTimeoutMs = 2000,
+  inputExitTimeoutMs = 7000,
   onError = () => {},
   onEvent = () => {},
 }) {
@@ -18,6 +20,12 @@ export function createSourceSupervisor({
   if (!mist) throw new Error('source supervisor requires Mist API');
   if (!Number.isInteger(unhealthyThreshold) || unhealthyThreshold < 1) {
     throw new Error('unhealthyThreshold must be a positive integer');
+  }
+  if (!Number.isFinite(nativeRecoveryGraceMs) || nativeRecoveryGraceMs < 0) {
+    throw new Error('nativeRecoveryGraceMs must be >= 0');
+  }
+  if (!Number.isFinite(postRearmGraceMs) || postRearmGraceMs < 0) {
+    throw new Error('postRearmGraceMs must be >= 0');
   }
   if (!Number.isFinite(intervalMs) || intervalMs < 1) {
     throw new Error('intervalMs must be >= 1');
@@ -40,8 +48,10 @@ export function createSourceSupervisor({
         channelId,
         healthy: false,
         consecutiveUnhealthy: 0,
+        unhealthySince: null,
         recoveryAttempts: 0,
         nextRecoveryAt: 0,
+        recoveryGraceUntil: 0,
         lastMediaMs: null,
       });
     }
@@ -66,6 +76,14 @@ export function createSourceSupervisor({
     }
   }
 
+  function clearFailureState(state) {
+    state.healthy = true;
+    state.consecutiveUnhealthy = 0;
+    state.unhealthySince = null;
+    state.recoveryAttempts = 0;
+    state.nextRecoveryAt = 0;
+  }
+
   async function check(channelId) {
     const entry = registry.get(channelId);
     if (!entry) throw new Error(`Unknown channel: ${channelId}`);
@@ -78,32 +96,53 @@ export function createSourceSupervisor({
       ? null
       : Number(rawMediaMs);
     const hasMediaClock = Number.isFinite(parsedMediaMs);
+    const previousMediaMs = state.lastMediaMs;
     const mediaProgressing = !hasMediaClock
-      || state.lastMediaMs === null
-      || parsedMediaMs > state.lastMediaMs;
-    const healthy = inputPresent && mediaProgressing;
+      || previousMediaMs === null
+      || parsedMediaMs > previousMediaMs;
+    const provedMediaProgress = hasMediaClock
+      && previousMediaMs !== null
+      && parsedMediaMs > previousMediaMs;
 
     if (hasMediaClock) state.lastMediaMs = parsedMediaMs;
 
+    const now = Number(nowFn());
+
+    // A newly re-armed Mist input needs time to establish a fresh media clock.
+    // Do not let the fallback supervisor fight that startup.
+    if (state.recoveryGraceUntil > now) {
+      if (inputPresent && (provedMediaProgress || !hasMediaClock)) {
+        state.recoveryGraceUntil = 0;
+        clearFailureState(state);
+      } else {
+        state.healthy = inputPresent;
+        state.consecutiveUnhealthy = 0;
+        state.unhealthySince = null;
+      }
+      return snapshot(state);
+    }
+
+    const healthy = inputPresent && mediaProgressing;
     if (healthy) {
-      state.healthy = true;
-      state.consecutiveUnhealthy = 0;
-      state.recoveryAttempts = 0;
-      state.nextRecoveryAt = 0;
+      state.recoveryGraceUntil = 0;
+      clearFailureState(state);
       return snapshot(state);
     }
 
     state.healthy = false;
     state.consecutiveUnhealthy += 1;
+    if (state.unhealthySince === null) state.unhealthySince = now;
 
-    const now = Number(nowFn());
     const thresholdReached = state.consecutiveUnhealthy >= unhealthyThreshold;
+    const nativeGraceElapsed = now - state.unhealthySince >= nativeRecoveryGraceMs;
     const backoffElapsed = now >= state.nextRecoveryAt;
 
-    if (thresholdReached && backoffElapsed) {
+    if (thresholdReached && nativeGraceElapsed && backoffElapsed) {
       const recoveryStartedAt = Number(nowFn());
       onEvent({ type: 'recovery-start', channelId, atMs: recoveryStartedAt });
 
+      // Mist's nuke_stream starts MistUtilNuke asynchronously. MistUtilNuke itself
+      // allows up to five seconds for clean shutdown before force cleanup.
       await mist.nukeStream(channelId);
       const nukeCompletedAt = Number(nowFn());
       onEvent({
@@ -123,13 +162,16 @@ export function createSourceSupervisor({
         durationMs: rearmCompletedAt - nukeCompletedAt,
         recoveryMs: rearmCompletedAt - recoveryStartedAt,
       });
+
       state.recoveryAttempts += 1;
       const delay = Math.min(
         maxBackoffMs,
         baseBackoffMs * (2 ** Math.max(0, state.recoveryAttempts - 1)),
       );
-      state.nextRecoveryAt = now + delay;
+      state.nextRecoveryAt = rearmCompletedAt + delay;
+      state.recoveryGraceUntil = rearmCompletedAt + postRearmGraceMs;
       state.consecutiveUnhealthy = 0;
+      state.unhealthySince = null;
       state.lastMediaMs = null;
     }
 
