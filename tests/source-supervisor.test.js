@@ -213,13 +213,14 @@ test('supervisor emits recovery phase timings around nuke and re-arm', async () 
 });
 
 
-test('recovery waits for the nuked Mist input to exit before re-arming', async () => {
+test('recovery waits for a stale nuked Mist input to exit before re-arming', async () => {
   const calls = [];
   const statuses = [
-    { active: true, inputs: 0 },
-    { active: true, inputs: 0 },
-    { active: true, inputs: 1 },
-    { active: true, inputs: 0 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 0, lastms: 10000 },
   ];
   const registry = createChannelRegistry({
     'test-ts': { source: 'http://source.internal/live.ts' },
@@ -250,8 +251,10 @@ test('recovery waits for the nuked Mist input to exit before re-arming', async (
 
   await supervisor.check('test-ts');
   await supervisor.check('test-ts');
+  await supervisor.check('test-ts');
 
   assert.deepEqual(calls, [
+    ['getStream', 'test-ts'],
     ['getStream', 'test-ts'],
     ['getStream', 'test-ts'],
     ['nukeStream', 'test-ts'],

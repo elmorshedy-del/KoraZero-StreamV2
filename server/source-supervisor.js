@@ -113,7 +113,7 @@ export function createSourceSupervisor({
         durationMs: nukeCompletedAt - recoveryStartedAt,
       });
 
-      await waitForInputExit(channelId);
+      if (inputPresent) await waitForInputExit(channelId);
       await mist.addStream(channelId, entry.source, { always_on: true });
       const rearmCompletedAt = Number(nowFn());
       onEvent({
