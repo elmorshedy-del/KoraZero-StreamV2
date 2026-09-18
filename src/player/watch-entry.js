@@ -21,6 +21,7 @@ let visibleLimit = PAGE_SIZE;
 let selectedStreamId = null;
 let activeChannel = null;
 let selectionGeneration = 0;
+let selectionController = null;
 
 const controller = createPlayerController({ video, hlsFactory: createBrowserHlsFactory() });
 
@@ -64,6 +65,9 @@ function renderCatalog() {
 
 async function selectChannel(channel, { updateUrl = true, userInitiated = true } = {}) {
   const myGeneration = ++selectionGeneration;
+  selectionController?.abort();
+  selectionController = new AbortController();
+  const myController = selectionController;
   selectedStreamId = channel.streamId;
   renderCatalog();
   titleEl.textContent = channel.name;
@@ -76,8 +80,10 @@ async function selectChannel(channel, { updateUrl = true, userInitiated = true }
   if (userInitiated) controller.beginUserPlaybackIntent();
 
   try {
-    const descriptor = await fetchPlaybackDescriptor(channel.streamId);
-    if (myGeneration !== selectionGeneration) return;
+    const descriptor = await fetchPlaybackDescriptor(channel.streamId, {
+      signal: myController.signal,
+    });
+    if (myGeneration !== selectionGeneration || myController.signal.aborted) return;
     if (diagnosticEl) {
       const d = descriptor.diagnostics || {};
       const kb = Number.isFinite(Number(d.segmentBytes)) ? Math.round(Number(d.segmentBytes) / 1024) : null;
@@ -99,7 +105,7 @@ async function selectChannel(channel, { updateUrl = true, userInitiated = true }
       history.replaceState(null, '', url);
     }
   } catch (error) {
-    if (myGeneration !== selectionGeneration) return;
+    if (myGeneration !== selectionGeneration || myController.signal.aborted || error?.name === 'AbortError') return;
     const errorMessage = error instanceof Error ? error.message : String(error);
 
     // A failed switch should not destroy the channel that was already playing.
@@ -166,4 +172,7 @@ try {
   messageEl.textContent = error instanceof Error ? error.message : String(error);
 }
 
-window.addEventListener('pagehide', () => controller.destroy(), { once: true });
+window.addEventListener('pagehide', () => {
+  selectionController?.abort();
+  controller.destroy();
+}, { once: true });
