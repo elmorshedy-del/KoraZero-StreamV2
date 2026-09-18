@@ -27,6 +27,7 @@ export function createRuntime(env = process.env, { fetchFn = globalThis.fetch } 
   const mistEndpoint = (env.V2_MIST_API_ENDPOINT || 'http://127.0.0.1:4242/api2').trim();
   const mistUsername = (env.V2_MIST_USERNAME || '').trim();
   const mistPassword = env.V2_MIST_PASSWORD || '';
+  const mistBootstrapAccount = env.V2_MIST_BOOTSTRAP_ACCOUNT === 'true';
   if (Boolean(mistUsername) !== Boolean(mistPassword)) {
     throw new Error('MistServer credentials require both V2_MIST_USERNAME and V2_MIST_PASSWORD');
   }
@@ -38,6 +39,7 @@ export function createRuntime(env = process.env, { fetchFn = globalThis.fetch } 
     endpoint: mistEndpoint,
     username: mistUsername,
     password: mistPassword,
+    bootstrapAccount: mistBootstrapAccount,
     fetchFn,
   });
   const gateway = createGatewayService({ registry, mist, publicHlsBase });

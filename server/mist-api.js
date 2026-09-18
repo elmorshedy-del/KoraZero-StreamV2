@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:4242/api2';
 const STATUS_FIELDS = ['viewers', 'inputs', 'outputs', 'health', 'tracks', 'status'];
 
-export function createMistApi({ endpoint = DEFAULT_ENDPOINT, username = '', password = '', fetchFn = globalThis.fetch } = {}) {
+export function createMistApi({ endpoint = DEFAULT_ENDPOINT, username = '', password = '', bootstrapAccount = false, fetchFn = globalThis.fetch } = {}) {
   if (typeof fetchFn !== 'function') throw new Error('Mist API requires fetch');
 
   function md5(value) {
@@ -42,7 +42,17 @@ export function createMistApi({ endpoint = DEFAULT_ENDPOINT, username = '', pass
     });
     const status = first?.authorize?.status;
     if (status === 'OK') return first;
-    if (status === 'NOACC') throw new Error('MistServer has no account configured');
+    if (status === 'NOACC') {
+      if (!bootstrapAccount) throw new Error('MistServer has no account configured');
+      const created = await post({
+        authorize: { new_username: username, new_password: password },
+        minimal: 1,
+      });
+      if (created?.authorize?.status !== 'ACC_MADE') {
+        throw new Error('MistServer first account creation failed');
+      }
+      return command(payload);
+    }
     if (status !== 'CHALL' || !first.authorize.challenge) {
       throw new Error(`Unexpected MistServer authorization status: ${status ?? 'missing'}`);
     }
