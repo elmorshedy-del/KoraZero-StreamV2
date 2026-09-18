@@ -31,5 +31,6 @@ export function createApp(env = process.env, { fetchFn = globalThis.fetch, stati
     bootstrap,
     server,
     gateway: runtime.gateway,
+    sourceSupervisor: runtime.sourceSupervisor,
   });
 }

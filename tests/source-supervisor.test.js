@@ -94,3 +94,49 @@ test('one healthy input observation clears failure and backoff state', async () 
   assert.equal(state.recoveryAttempts, 0);
   assert.equal(state.nextRecoveryAt, 0);
 });
+
+test('background supervision checks only armed channels and disarm removes them', async () => {
+  const calls = [];
+  const intervals = [];
+  const registry = createChannelRegistry({
+    one: { source: 'http://source.internal/one.ts' },
+    two: { source: 'http://source.internal/two.ts' },
+  });
+  const mist = {
+    async getStream(channelId) {
+      calls.push(['getStream', channelId]);
+      return { active: true, inputs: 1 };
+    },
+    async nukeStream(channelId) {
+      calls.push(['nukeStream', channelId]);
+    },
+    async addStream(channelId, source, options) {
+      calls.push(['addStream', channelId, source, options]);
+    },
+  };
+  const supervisor = createSourceSupervisor({
+    registry,
+    mist,
+    intervalMs: 1000,
+    setIntervalFn(fn, ms) {
+      intervals.push({ fn, ms });
+      return intervals.length;
+    },
+    clearIntervalFn() {},
+  });
+
+  supervisor.arm('one');
+  supervisor.start();
+  assert.equal(intervals.length, 1);
+  assert.equal(intervals[0].ms, 1000);
+
+  await intervals[0].fn();
+  assert.deepEqual(calls, [['getStream', 'one']]);
+
+  calls.length = 0;
+  supervisor.disarm('one');
+  supervisor.arm('two');
+  await intervals[0].fn();
+  assert.deepEqual(calls, [['getStream', 'two']]);
+  assert.deepEqual(supervisor.armedChannels(), ['two']);
+});

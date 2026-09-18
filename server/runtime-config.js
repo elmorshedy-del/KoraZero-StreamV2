@@ -1,6 +1,7 @@
 import { createChannelRegistry } from './channel-registry.js';
 import { createMistApi } from './mist-api.js';
 import { createGatewayService } from './gateway-service.js';
+import { createSourceSupervisor } from './source-supervisor.js';
 
 function requireEnv(env, key) {
   const value = env[key];
@@ -42,7 +43,26 @@ export function createRuntime(env = process.env, { fetchFn = globalThis.fetch } 
     bootstrapAccount: mistBootstrapAccount,
     fetchFn,
   });
-  const gateway = createGatewayService({ registry, mist, publicHlsBase });
+  const sourceSupervisor = createSourceSupervisor({
+    registry,
+    mist,
+    onError(error) {
+      console.error('V2 source supervisor error', error);
+    },
+  });
+  const gateway = createGatewayService({
+    registry,
+    mist,
+    publicHlsBase,
+    sourceSupervisor,
+  });
 
-  return Object.freeze({ port, internalToken, registry, mist, gateway });
+  return Object.freeze({
+    port,
+    internalToken,
+    registry,
+    mist,
+    sourceSupervisor,
+    gateway,
+  });
 }

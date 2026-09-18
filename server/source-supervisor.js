@@ -5,14 +5,24 @@ export function createSourceSupervisor({
   baseBackoffMs = 2000,
   maxBackoffMs = 8000,
   nowFn = Date.now,
+  intervalMs = 1000,
+  setIntervalFn = globalThis.setInterval,
+  clearIntervalFn = globalThis.clearInterval,
+  onError = () => {},
 }) {
   if (!registry) throw new Error('source supervisor requires registry');
   if (!mist) throw new Error('source supervisor requires Mist API');
   if (!Number.isInteger(unhealthyThreshold) || unhealthyThreshold < 1) {
     throw new Error('unhealthyThreshold must be a positive integer');
   }
+  if (!Number.isFinite(intervalMs) || intervalMs < 1) {
+    throw new Error('intervalMs must be >= 1');
+  }
 
   const states = new Map();
+  const armed = new Set();
+  let timer = null;
+  let tickRunning = false;
 
   function stateFor(channelId) {
     if (!states.has(channelId)) {
@@ -69,5 +79,56 @@ export function createSourceSupervisor({
     return snapshot(state);
   }
 
-  return Object.freeze({ check });
+  function arm(channelId) {
+    if (!registry.get(channelId)) throw new Error(`Unknown channel: ${channelId}`);
+    armed.add(channelId);
+  }
+
+  function disarm(channelId) {
+    armed.delete(channelId);
+    states.delete(channelId);
+  }
+
+  function armedChannels() {
+    return [...armed];
+  }
+
+  async function checkArmed() {
+    if (tickRunning) return;
+    tickRunning = true;
+    try {
+      for (const channelId of [...armed]) {
+        await check(channelId);
+      }
+    } finally {
+      tickRunning = false;
+    }
+  }
+
+  function start() {
+    if (timer !== null) return;
+    timer = setIntervalFn(async () => {
+      try {
+        await checkArmed();
+      } catch (error) {
+        onError(error);
+      }
+    }, intervalMs);
+  }
+
+  function stop() {
+    if (timer === null) return;
+    clearIntervalFn(timer);
+    timer = null;
+  }
+
+  return Object.freeze({
+    check,
+    checkArmed,
+    arm,
+    disarm,
+    armedChannels,
+    start,
+    stop,
+  });
 }

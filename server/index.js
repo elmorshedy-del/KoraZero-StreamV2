@@ -19,6 +19,8 @@ if (fanout) {
   console.log(`V2 fanout smoke passed channel=${fanout.channelId} viewers=${fanout.viewers} upstreamPulls=${fanout.upstreamPulls} totalPulls=${fanout.totalPulls}`);
 }
 
+app.sourceSupervisor.start();
+
 const recovery = await runConfiguredRecoverySmokeTest(process.env);
 if (recovery) {
   console.log(`V2 recovery smoke passed channel=${recovery.channelId} reconnectPulls=${recovery.reconnectPulls} upstreamPulls=${recovery.upstreamPulls} totalPulls=${recovery.totalPulls}`);

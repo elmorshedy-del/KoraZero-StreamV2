@@ -22,7 +22,7 @@ function createMistFake() {
   };
 }
 
-function fixture() {
+function fixture({ sourceSupervisor = null } = {}) {
   const registry = createChannelRegistry({
     'bein-1': { source: 'https://provider.invalid/private-source.ts' },
   });
@@ -31,6 +31,7 @@ function fixture() {
     registry,
     mist,
     publicHlsBase: 'https://stream-v2.example/hls',
+    sourceSupervisor,
   });
   return { gateway, mist };
 }
@@ -81,4 +82,21 @@ test('unknown channels fail before touching MistServer', async () => {
   await assert.rejects(() => gateway.status('missing'), /unknown channel/i);
   await assert.rejects(() => gateway.stop('missing'), /unknown channel/i);
   assert.deepEqual(mist.calls, []);
+});
+
+test('activate arms bounded source recovery and stop disarms it', async () => {
+  const events = [];
+  const sourceSupervisor = {
+    arm(channelId) { events.push(['arm', channelId]); },
+    disarm(channelId) { events.push(['disarm', channelId]); },
+  };
+  const { gateway } = fixture({ sourceSupervisor });
+
+  await gateway.activate('bein-1');
+  await gateway.stop('bein-1');
+
+  assert.deepEqual(events, [
+    ['arm', 'bein-1'],
+    ['disarm', 'bein-1'],
+  ]);
 });

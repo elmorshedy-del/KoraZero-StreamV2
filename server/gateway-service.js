@@ -2,7 +2,7 @@ function trimBase(value) {
   return String(value || '').replace(/\/+$/, '');
 }
 
-export function createGatewayService({ registry, mist, publicHlsBase }) {
+export function createGatewayService({ registry, mist, publicHlsBase, sourceSupervisor = null }) {
   if (!registry) throw new Error('gateway requires registry');
   if (!mist) throw new Error('gateway requires Mist API');
   const hlsBase = trimBase(publicHlsBase);
@@ -28,6 +28,7 @@ export function createGatewayService({ registry, mist, publicHlsBase }) {
     async activate(channelId) {
       const entry = channel(channelId);
       await mist.addStream(channelId, entry.source, { always_on: true });
+      sourceSupervisor?.arm(channelId);
       return playback(channelId);
     },
 
@@ -49,6 +50,7 @@ export function createGatewayService({ registry, mist, publicHlsBase }) {
 
     async stop(channelId) {
       channel(channelId);
+      sourceSupervisor?.disarm(channelId);
       await mist.deleteStream(channelId);
       return { channelId, stopped: true };
     },

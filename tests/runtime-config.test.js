@@ -15,6 +15,7 @@ test('runtime config composes registry, Mist endpoint and public HLS base from e
 
   assert.equal(runtime.port, 8787);
   assert.equal(runtime.internalToken, 'secret');
+  assert.equal(typeof runtime.sourceSupervisor.start, 'function');
   assert.deepEqual(runtime.gateway.playback('bein-1'), {
     channelId: 'bein-1',
     manifestUrl: 'https://stream-v2.example/hls/bein-1/index.m3u8',
