@@ -250,3 +250,76 @@ test('catalog playback fails closed, cleans Mist, and preserves a phase trace wh
     ['getStream', 'iptv-444'],
   ]);
 });
+
+
+test('stale Mist input bookkeeping never blocks a verified channel switch when provider slot is free', async () => {
+  const registry = createChannelRegistry({});
+  const calls = [];
+  const mist = {
+    async listConfiguredStreams() {
+      calls.push(['listConfiguredStreams']);
+      return ['iptv-2463'];
+    },
+    async nukeStream(name) {
+      calls.push(['nukeStream', name]);
+      return {};
+    },
+    async deleteStream(name) {
+      calls.push(['deleteStream', name]);
+      return {};
+    },
+    async getStream(name) {
+      calls.push(['getStream', name]);
+      return {
+        streamName: name,
+        active: true,
+        viewers: 0,
+        inputs: 1,
+        outputs: 0,
+        tracks: 0,
+        status: 'stale',
+        health: null,
+      };
+    },
+    async addStream(name, source, options = {}) {
+      calls.push(['addStream', name, source, options]);
+      return {};
+    },
+  };
+  const catalogClient = {
+    async list() {
+      return {
+        categories: [],
+        channels: [{ streamId: '3645', name: 'beIN Sport 1 Vega', categoryId: '1', categoryName: 'beIN Sports Vega' }],
+      };
+    },
+    async waitForFreeSlot() {
+      calls.push(['provider-slot-free']);
+      return { activeConnections: 0, maxConnections: 1 };
+    },
+    async stats() {
+      return { streams: { '3645': { transportMode: 'hls-to-ts', playlistFetches: 1, segmentFetches: 3 } } };
+    },
+  };
+  const gateway = createGatewayService({
+    registry,
+    mist,
+    publicHlsBase: 'https://stream-v2.example/hls',
+    catalogClient,
+    relayBase: 'http://relay.internal:8080',
+    playbackProbeFn: async () => ({ ok: true, segmentBytes: 123456, totalMs: 10 }),
+    sleepFn: async () => {},
+  });
+
+  const started = Date.now();
+  const result = await gateway.playback('3645');
+  assert.equal(result.verified, true);
+  assert.equal(result.channelId, 'iptv-3645');
+  assert.ok(Date.now() - started < 3_000);
+  assert.ok(calls.some((call) => call[0] === 'provider-slot-free'));
+  assert.ok(calls.some((call) => call[0] === 'addStream' && call[1] === 'iptv-3645'));
+  const diagnostic = gateway.diagnostic('3645');
+  assert.equal(diagnostic.ok, true);
+  assert.ok(diagnostic.events.some((event) => event.phase === 'mist-stop-stale'));
+  assert.equal(diagnostic.phase, 'verified');
+});
