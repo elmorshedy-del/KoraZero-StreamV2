@@ -146,3 +146,40 @@ test('IPTV relay keeps split provider chunks aligned to 188-byte TS packets', as
   assert.equal(output.length, bytes.length);
   assert.deepEqual(output, bytes);
 });
+
+
+test('relay observability separates provider attempts, successful opens, failures, and blocked duplicates', async () => {
+  let upstreamController;
+  const relay = createIptvRelay(env, {
+    fetchFn: async () => new Response(new ReadableStream({
+      start(controller) {
+        upstreamController = controller;
+        controller.enqueue(concat(tsPacket(256, 0), tsPacket(256, 1)));
+      },
+    }), { status: 200, headers: { 'content-type': 'video/mp2t' } }),
+  });
+
+  const first = await relay.handle({ method: 'GET', pathname: '/live/3974.ts' });
+  const blocked = await relay.handle({ method: 'GET', pathname: '/live/3974.ts' });
+
+  assert.equal(blocked.status, 503);
+  assert.equal(relay.stats().providerAttempts, 1);
+  assert.equal(relay.stats().successfulProviderOpens, 1);
+  assert.equal(relay.stats().failedProviderOpens, 0);
+  assert.equal(relay.stats().rejectedConcurrentPulls, 1);
+
+  upstreamController.close();
+  await first.body.cancel();
+});
+
+test('relay counts upstream HTTP failure as a failed provider open', async () => {
+  const relay = createIptvRelay(env, {
+    fetchFn: async () => new Response('bad gateway', { status: 502 }),
+  });
+
+  const response = await relay.handle({ method: 'GET', pathname: '/live/3974.ts' });
+  assert.equal(response.status, 502);
+  assert.equal(relay.stats().providerAttempts, 1);
+  assert.equal(relay.stats().successfulProviderOpens, 0);
+  assert.equal(relay.stats().failedProviderOpens, 1);
+});
