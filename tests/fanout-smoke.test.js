@@ -110,3 +110,37 @@ test('configured fanout smoke uses the deployed smoke channel and source stats e
     totalPulls: 4,
   });
 });
+
+
+test('fanout smoke waits boundedly for one upstream pull after a source restart', async () => {
+  const statsUrl = 'http://source.internal/stats';
+  const root = 'http://mist.internal:8080/hls/test-ts/index.m3u8';
+  const segment = 'http://mist.internal:8080/hls/test-ts/1000_3000.ts';
+  const stats = [
+    { activePulls: 0, totalPulls: 8, maxConcurrentPulls: 1, headRequests: 2 },
+    { activePulls: 1, totalPulls: 9, maxConcurrentPulls: 1, headRequests: 3 },
+    { activePulls: 1, totalPulls: 9, maxConcurrentPulls: 1, headRequests: 3 },
+  ];
+  const delays = [];
+  const fetchFn = async (url) => {
+    if (url === statsUrl) return textResponse(JSON.stringify(stats.shift()), { contentType: 'application/json' });
+    if (url === root) return textResponse('#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\n1000_3000.ts\n');
+    if (url === segment) return textResponse('media-bytes', { contentType: 'video/mp2t' });
+    throw new Error(`unexpected URL: ${url}`);
+  };
+
+  const result = await smoke.runFanoutSmokeTest({
+    channelId: 'test-ts',
+    hlsBase: 'http://mist.internal:8080/hls',
+    sourceStatsUrl: statsUrl,
+    viewers: 2,
+    readyAttempts: 3,
+    readyDelayMs: 25,
+    fetchFn,
+    sleepFn: async (ms) => { delays.push(ms); },
+  });
+
+  assert.deepEqual(delays, [25]);
+  assert.equal(result.upstreamPulls, 1);
+  assert.equal(result.totalPulls, 9);
+});
