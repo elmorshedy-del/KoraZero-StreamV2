@@ -190,3 +190,29 @@ export async function runFanoutSmokeTest({
     totalPulls: Number(after.totalPulls),
   };
 }
+
+
+export async function runConfiguredFanoutSmokeTest(env = process.env, options = {}) {
+  const viewersRaw = String(env.V2_FANOUT_VIEWERS || '').trim();
+  const sourceStatsUrl = String(env.V2_FANOUT_SOURCE_STATS_URL || '').trim();
+  if (!viewersRaw && !sourceStatsUrl) return null;
+
+  const channelId = String(env.V2_SMOKE_TEST_CHANNEL || '').trim();
+  const hlsBase = String(env.V2_MIST_HLS_INTERNAL_BASE || '').trim();
+  if (!channelId) throw new Error('V2_SMOKE_TEST_CHANNEL is required when fanout smoke is enabled');
+  if (!hlsBase) throw new Error('V2_MIST_HLS_INTERNAL_BASE is required when fanout smoke is enabled');
+  if (!sourceStatsUrl) throw new Error('V2_FANOUT_SOURCE_STATS_URL is required when fanout smoke is enabled');
+
+  const viewers = Number(viewersRaw || 5);
+  if (!Number.isInteger(viewers) || viewers < 2) {
+    throw new Error('V2_FANOUT_VIEWERS must be an integer >= 2');
+  }
+
+  return runFanoutSmokeTest({
+    channelId,
+    hlsBase,
+    sourceStatsUrl,
+    viewers,
+    ...options,
+  });
+}
