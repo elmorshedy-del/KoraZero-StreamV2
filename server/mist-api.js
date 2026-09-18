@@ -95,6 +95,23 @@ export function createMistApi({ endpoint = DEFAULT_ENDPOINT, username = '', pass
     return { changed: true };
   }
 
+  async function ensureViewerSessionMode({ mode = 10 } = {}) {
+    const normalizedMode = Number(mode);
+    if (!Number.isInteger(normalizedMode) || normalizedMode < 0 || normalizedMode > 15) {
+      throw new Error('MistServer viewer session mode must be an integer from 0 through 15');
+    }
+    const backup = await command({ config_backup: true });
+    const rawPreviousMode = backup?.config_backup?.config?.sessionViewerMode;
+    const previousMode = rawPreviousMode === null || rawPreviousMode === undefined
+      ? null
+      : Number(rawPreviousMode);
+    if (previousMode === normalizedMode) {
+      return { changed: false, previousMode, mode: normalizedMode };
+    }
+    await command({ config: { sessionViewerMode: normalizedMode } });
+    return { changed: true, previousMode, mode: normalizedMode };
+  }
+
   function normalizedLastMs(value) {
     if (value === null || value === undefined || value === '') return null;
     const numeric = Number(value);
@@ -104,6 +121,7 @@ export function createMistApi({ endpoint = DEFAULT_ENDPOINT, username = '', pass
   return Object.freeze({
     ensureHttpProtocol,
     ensureHlsProtocol,
+    ensureViewerSessionMode,
 
     async addStream(name, source, options = {}) {
       return command({ addstream: { [name]: { ...options, source } } });
