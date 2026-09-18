@@ -264,3 +264,141 @@ test('recovery waits for a stale nuked Mist input to exit before re-arming', asy
     ['addStream', 'test-ts', 'http://source.internal/live.ts', { always_on: true }],
   ]);
 });
+
+
+test('supervisor gives Mist native recovery a grace window before destructive reset', async () => {
+  let now = 0;
+  const calls = [];
+  const statuses = [
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 0, lastms: 10000 },
+  ];
+  const registry = createChannelRegistry({
+    'test-ts': { source: 'http://source.internal/live.ts' },
+  });
+  const mist = {
+    async getStream(channelId) {
+      calls.push(['getStream', channelId]);
+      return statuses.shift() ?? { active: true, inputs: 0, lastms: 10000 };
+    },
+    async nukeStream(channelId) { calls.push(['nukeStream', channelId]); },
+    async addStream(channelId, source, options) { calls.push(['addStream', channelId, source, options]); },
+  };
+  const supervisor = createSourceSupervisor({
+    registry,
+    mist,
+    unhealthyThreshold: 2,
+    nativeRecoveryGraceMs: 5000,
+    nowFn: () => now,
+  });
+
+  await supervisor.check('test-ts');
+  now = 1000;
+  await supervisor.check('test-ts');
+  now = 2000;
+  await supervisor.check('test-ts');
+
+  assert.equal(calls.some(([name]) => name === 'nukeStream'), false);
+
+  now = 6100;
+  await supervisor.check('test-ts');
+  assert.equal(calls.filter(([name]) => name === 'nukeStream').length, 1);
+});
+
+test('default nuke cleanup window tolerates MistUtilNuke taking about five seconds', async () => {
+  let now = 0;
+  const calls = [];
+  const statuses = [
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 0, lastms: 10000 },
+  ];
+  const registry = createChannelRegistry({
+    'test-ts': { source: 'http://source.internal/live.ts' },
+  });
+  const mist = {
+    async getStream(channelId) {
+      calls.push(['getStream', channelId]);
+      return statuses.shift() ?? { active: true, inputs: 0, lastms: 10000 };
+    },
+    async nukeStream(channelId) { calls.push(['nukeStream', channelId]); },
+    async addStream(channelId, source, options) { calls.push(['addStream', channelId, source, options]); },
+  };
+  const supervisor = createSourceSupervisor({
+    registry,
+    mist,
+    unhealthyThreshold: 2,
+    nativeRecoveryGraceMs: 0,
+    inputExitPollMs: 1000,
+    nowFn: () => now,
+    sleepFn: async (ms) => { now += ms; calls.push(['sleep', ms]); },
+  });
+
+  await supervisor.check('test-ts');
+  now += 1000;
+  await supervisor.check('test-ts');
+  now += 1000;
+  await supervisor.check('test-ts');
+
+  assert.equal(calls.filter(([name]) => name === 'nukeStream').length, 1);
+  assert.equal(calls.filter(([name]) => name === 'addStream').length, 1);
+  assert.ok(now >= 5000);
+});
+
+test('post-rearm grace prevents a warming input from being nuked again immediately', async () => {
+  let now = 0;
+  const calls = [];
+  const statuses = [
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 0, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+  ];
+  const registry = createChannelRegistry({
+    'test-ts': { source: 'http://source.internal/live.ts' },
+  });
+  const mist = {
+    async getStream(channelId) {
+      calls.push(['getStream', channelId]);
+      return statuses.shift() ?? { active: true, inputs: 1, lastms: 10000 };
+    },
+    async nukeStream(channelId) { calls.push(['nukeStream', channelId]); },
+    async addStream(channelId, source, options) { calls.push(['addStream', channelId, source, options]); },
+  };
+  const supervisor = createSourceSupervisor({
+    registry,
+    mist,
+    unhealthyThreshold: 2,
+    nativeRecoveryGraceMs: 0,
+    postRearmGraceMs: 8000,
+    nowFn: () => now,
+  });
+
+  await supervisor.check('test-ts');
+  now = 1000;
+  await supervisor.check('test-ts');
+  now = 2000;
+  await supervisor.check('test-ts');
+  assert.equal(calls.filter(([name]) => name === 'nukeStream').length, 1);
+
+  now = 3000;
+  await supervisor.check('test-ts');
+  now = 4000;
+  await supervisor.check('test-ts');
+  now = 5000;
+  await supervisor.check('test-ts');
+
+  assert.equal(calls.filter(([name]) => name === 'nukeStream').length, 1);
+});
