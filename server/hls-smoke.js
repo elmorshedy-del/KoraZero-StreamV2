@@ -166,7 +166,6 @@ export async function runFanoutSmokeTest({
   if (!Number.isInteger(viewers) || viewers < 2) throw new Error('Fanout smoke requires at least two viewers');
   if (typeof fetchFn !== 'function') throw new Error('Fanout smoke requires fetch');
 
-  const startedAt = Number(nowFn());
   const before = await fetchJson(sourceStatsUrl, fetchFn);
   if (Number(before.activePulls) !== 1) {
     throw new Error(`Fanout smoke expected exactly one active upstream pull before viewers, got ${before.activePulls}`);
@@ -238,6 +237,7 @@ export async function runRecoverySmokeTest({
   if (!sourceControlToken) throw new Error('Recovery smoke requires sourceControlToken');
   if (!Number.isInteger(attempts) || attempts < 1) throw new Error('Recovery smoke requires attempts >= 1');
 
+  const startedAt = Number(nowFn());
   const before = await fetchJson(sourceStatsUrl, fetchFn);
   if (Number(before.activePulls) !== 1) {
     throw new Error(`Recovery smoke expected one active upstream pull before fault, got ${before.activePulls}`);
