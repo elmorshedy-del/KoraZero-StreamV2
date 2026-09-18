@@ -19,6 +19,10 @@ function createMistFake() {
       calls.push(['getStream', name]);
       return { streamName: name, active: true, viewers: 2, inputs: 1, outputs: 2, tracks: 2, status: 'online', health: null };
     },
+    async listConfiguredStreams() {
+      calls.push(['listConfiguredStreams']);
+      return [];
+    },
   };
 }
 
@@ -136,9 +140,46 @@ test('catalog playback switches one provider-backed Mist input at a time', async
   assert.equal(second.channelId, 'iptv-2454');
   assert.deepEqual(events, ['slot-free', 'slot-free']);
   assert.deepEqual(mist.calls, [
+    ['listConfiguredStreams'],
     ['addStream', 'iptv-2449', 'http://relay.internal:8080/live/2449.ts', { always_on: true }],
-    ['deleteStream', 'iptv-2449'],
+    ['listConfiguredStreams'],
     ['addStream', 'iptv-2454', 'http://relay.internal:8080/live/2454.ts', { always_on: true }],
   ]);
   assert.equal(JSON.stringify(second).includes('relay.internal'), false);
+});
+
+
+test('catalog playback cleans stale dynamic Mist streams without arming the static supervisor', async () => {
+  const registry = createChannelRegistry({});
+  const mist = createMistFake();
+  mist.listConfiguredStreams = async () => {
+    mist.calls.push(['listConfiguredStreams']);
+    return ['bein-1', 'iptv-111', 'iptv-222'];
+  };
+  const supervisorEvents = [];
+  const sourceSupervisor = {
+    arm(id) { supervisorEvents.push(['arm', id]); },
+    disarm(id) { supervisorEvents.push(['disarm', id]); },
+  };
+  const catalogClient = {
+    async list() {
+      return { categories: [], channels: [{ streamId: '333', name: 'Three', categoryId: '', categoryName: 'Other' }] };
+    },
+    async waitForFreeSlot() { return { activeConnections: 0, maxConnections: 1 }; },
+  };
+  const gateway = createGatewayService({
+    registry, mist, sourceSupervisor, catalogClient,
+    publicHlsBase: 'https://stream-v2.example/hls',
+    relayBase: 'http://relay.internal:8080',
+  });
+
+  const result = await gateway.playback('333');
+  assert.equal(result.channelId, 'iptv-333');
+  assert.deepEqual(mist.calls, [
+    ['listConfiguredStreams'],
+    ['deleteStream', 'iptv-111'],
+    ['deleteStream', 'iptv-222'],
+    ['addStream', 'iptv-333', 'http://relay.internal:8080/live/333.ts', { always_on: true }],
+  ]);
+  assert.deepEqual(supervisorEvents, []);
 });
