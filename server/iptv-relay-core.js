@@ -100,8 +100,13 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
   const portal = normalizePortal(required(env, 'V2_IPTV_PORTAL_URL'));
   const username = required(env, 'V2_IPTV_USERNAME');
   const password = required(env, 'V2_IPTV_PASSWORD');
-  const allowedStreamId = required(env, 'V2_IPTV_TEST_STREAM_ID');
-  if (!/^\d+$/.test(allowedStreamId)) throw new Error('V2_IPTV_TEST_STREAM_ID must be numeric');
+  const allowedRaw = typeof env.V2_IPTV_ALLOWED_STREAM_IDS === 'string'
+    ? env.V2_IPTV_ALLOWED_STREAM_IDS.trim()
+    : '';
+  const fallbackStreamId = allowedRaw ? '' : required(env, 'V2_IPTV_TEST_STREAM_ID');
+  const allowedStreamIds = new Set((allowedRaw || fallbackStreamId).split(',').map((value) => value.trim()).filter(Boolean));
+  if (!allowedStreamIds.size || [...allowedStreamIds].some((streamId) => !/^\d+$/.test(streamId))) throw new Error('Configured IPTV stream ids must be numeric');
+  const streamStats = Object.fromEntries([...allowedStreamIds].map((streamId) => [streamId, { activePulls: 0, totalPulls: 0, providerAttempts: 0, successfulProviderOpens: 0, failedProviderOpens: 0, rejectedConcurrentPulls: 0, realBytes: 0, keepaliveBursts: 0, keepaliveBytes: 0 }]));
 
   const stats = {
     activePulls: 0,
@@ -118,7 +123,7 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
   };
 
   function snapshot() {
-    return Object.freeze({ ...stats });
+    return Object.freeze({ ...stats, streams: Object.freeze(Object.fromEntries(Object.entries(streamStats).map(([streamId, value]) => [streamId, Object.freeze({ ...value })]))) });
   }
 
   async function handle({ method = 'GET', pathname = '/', signal } = {}) {
@@ -136,7 +141,9 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
     }
 
     const match = pathname.match(/^\/live\/(\d+)\.ts$/);
-    if (!match || match[1] !== allowedStreamId) return new Response('Not found', { status: 404 });
+    const requestedStreamId = match?.[1] || null;
+    if (!requestedStreamId || !allowedStreamIds.has(requestedStreamId)) return new Response('Not found', { status: 404 });
+    const currentStreamStats = streamStats[requestedStreamId];
 
     if (method === 'HEAD') {
       return new Response(null, {
@@ -149,8 +156,9 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
     }
     if (method !== 'GET') return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
 
-    if (stats.activePulls >= 1) {
+    if (currentStreamStats.activePulls >= 1) {
       stats.rejectedConcurrentPulls += 1;
+      currentStreamStats.rejectedConcurrentPulls += 1;
       return new Response('Upstream pull already active', {
         status: 503,
         headers: { 'retry-after': '1', 'cache-control': 'no-store' },
@@ -159,6 +167,8 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
 
     stats.activePulls += 1;
     stats.totalPulls += 1;
+    currentStreamStats.activePulls += 1;
+    currentStreamStats.totalPulls += 1;
     stats.maxConcurrentPulls = Math.max(stats.maxConcurrentPulls, stats.activePulls);
 
     const controller = new AbortController();
@@ -170,11 +180,13 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
       released = true;
       signal?.removeEventListener?.('abort', abort);
       stats.activePulls = Math.max(0, stats.activePulls - 1);
+      currentStreamStats.activePulls = Math.max(0, currentStreamStats.activePulls - 1);
     };
 
-    const target = `${portal}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${allowedStreamId}.ts`;
+    const target = `${portal}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${requestedStreamId}.ts`;
     try {
       stats.providerAttempts += 1;
+      currentStreamStats.providerAttempts += 1;
       const upstream = await fetchFn(target, {
         method: 'GET',
         headers: {
@@ -188,15 +200,17 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
       stats.lastStatus = upstream.status;
       if (!upstream.ok || !upstream.body) {
         stats.failedProviderOpens += 1;
+        currentStreamStats.failedProviderOpens += 1;
         release();
         controller.abort();
         return new Response(`Upstream error ${upstream.status}`, { status: 502, headers: { 'cache-control': 'no-store' } });
       }
 
       stats.successfulProviderOpens += 1;
+      currentStreamStats.successfulProviderOpens += 1;
       let finalHost = null;
       try { finalHost = upstream.url ? new URL(upstream.url).host : null; } catch {}
-      log({ event: 'upstream-open', streamId: allowedStreamId, status: upstream.status, finalHost });
+      log({ event: 'upstream-open', streamId: requestedStreamId, status: upstream.status, finalHost });
 
       const reader = upstream.body.getReader();
       const framer = createTsFramer();
@@ -229,6 +243,8 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
               if (winner.idle) {
                 stats.keepaliveBursts += 1;
                 stats.keepaliveBytes += NULL_BURST.length;
+                currentStreamStats.keepaliveBursts += 1;
+                currentStreamStats.keepaliveBytes += NULL_BURST.length;
                 out.enqueue(NULL_BURST);
                 return;
               }
@@ -242,7 +258,9 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
                 return;
               }
 
-              stats.realBytes += value?.byteLength || 0;
+              const receivedBytes = value?.byteLength || 0;
+              stats.realBytes += receivedBytes;
+              currentStreamStats.realBytes += receivedBytes;
               const framed = framer.push(value || new Uint8Array(0));
               if (framed.length) {
                 out.enqueue(framed);
@@ -270,8 +288,9 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
         },
       });
     } catch (error) {
-      if (stats.lastStatus == null || stats.successfulProviderOpens < stats.providerAttempts - stats.failedProviderOpens) {
+      if (stats.lastStatus == null || currentStreamStats.successfulProviderOpens < currentStreamStats.providerAttempts - currentStreamStats.failedProviderOpens) {
         stats.failedProviderOpens += 1;
+        currentStreamStats.failedProviderOpens += 1;
       }
       release();
       controller.abort();
