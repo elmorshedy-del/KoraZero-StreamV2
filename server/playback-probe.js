@@ -50,6 +50,7 @@ export async function probeHlsPlayback({
         signal: AbortSignal.timeout(timeoutMs),
       });
       const rootText = await root.text();
+      const rootFetchMs = Date.now() - rootStartedAt;
       if (!root.ok) throw new Error(`root manifest HTTP ${root.status}`);
 
       let mediaUrl = manifestUrl;
@@ -85,7 +86,7 @@ export async function probeHlsPlayback({
         ok: true,
         attempt,
         segmentBytes: bytes.byteLength,
-        rootFetchMs: Date.now() - rootStartedAt - variantFetchMs - (Date.now() - segmentStartedAt),
+        rootFetchMs,
         variantFetchMs,
         segmentFetchMs: Date.now() - segmentStartedAt,
         totalMs: Date.now() - startedAt,
