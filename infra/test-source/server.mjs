@@ -28,13 +28,14 @@ const FFMPEG_ARGS = Object.freeze([
   'pipe:1',
 ]);
 
-export function createSyntheticTsServer({ spawnFn = spawn } = {}) {
+export function createSyntheticTsServer({ spawnFn = spawn, controlToken = '' } = {}) {
   const stats = {
     activePulls: 0,
     totalPulls: 0,
     maxConcurrentPulls: 0,
     headRequests: 0,
   };
+  const sessions = new Set();
 
   return createServer((req, res) => {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
@@ -46,6 +47,32 @@ export function createSyntheticTsServer({ spawnFn = spawn } = {}) {
         return;
       }
       const body = JSON.stringify(stats);
+      res.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'content-length': Buffer.byteLength(body),
+        'cache-control': 'no-store',
+      });
+      res.end(body);
+      return;
+    }
+
+    if (url.pathname === '/control/disconnect') {
+      if (req.method !== 'POST') {
+        res.writeHead(405, { allow: 'POST' });
+        res.end();
+        return;
+      }
+      if (!controlToken || req.headers.authorization !== `Bearer ${controlToken}`) {
+        res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: 'unauthorized' }));
+        return;
+      }
+      const active = [...sessions];
+      for (const session of active) {
+        session.res.destroy();
+        session.stop();
+      }
+      const body = JSON.stringify({ disconnected: active.length });
       res.writeHead(200, {
         'content-type': 'application/json; charset=utf-8',
         'content-length': Buffer.byteLength(body),
@@ -92,12 +119,16 @@ export function createSyntheticTsServer({ spawnFn = spawn } = {}) {
       stdio: ['ignore', 'pipe', 'inherit'],
     });
     let stopped = false;
+    let session = null;
     const stop = () => {
       if (stopped) return;
       stopped = true;
+      if (session) sessions.delete(session);
       stats.activePulls = Math.max(0, stats.activePulls - 1);
       child.kill?.('SIGTERM');
     };
+    session = { res, stop };
+    sessions.add(session);
 
     child.stdout.on?.('error', (error) => {
       if (!res.destroyed) res.destroy(error);
@@ -121,7 +152,9 @@ export function createSyntheticTsServer({ spawnFn = spawn } = {}) {
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 if (isMain) {
   const port = Number(process.env.PORT || 8080);
-  const server = createSyntheticTsServer();
+  const server = createSyntheticTsServer({
+    controlToken: process.env.TEST_SOURCE_CONTROL_TOKEN || '',
+  });
   server.listen(port, '::', () => {
     console.log(`Synthetic MPEG-TS source listening on [::]:${port}/live.ts`);
   });
