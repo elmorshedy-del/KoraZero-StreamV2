@@ -48,6 +48,7 @@ test('recovery smoke restores playable HLS after one forced upstream disconnect 
   };
 
   const delays = [];
+  let now = 0;
   const result = await smoke.runRecoverySmokeTest({
     channelId: 'test-ts',
     hlsBase: 'http://mist.internal/hls',
@@ -57,7 +58,8 @@ test('recovery smoke restores playable HLS after one forced upstream disconnect 
     attempts: 3,
     delayMs: 25,
     fetchFn,
-    sleepFn: async (ms) => { delays.push(ms); },
+    sleepFn: async (ms) => { delays.push(ms); now += ms; },
+    nowFn: () => now,
   });
 
   assert.deepEqual(result, {
@@ -66,6 +68,14 @@ test('recovery smoke restores playable HLS after one forced upstream disconnect 
     reconnectPulls: 1,
     upstreamPulls: 1,
     totalPulls: 8,
+    timings: {
+      disconnectRequestMs: 0,
+      faultToZeroPullMs: 25,
+      faultToReconnectMs: 50,
+      reconnectToPlayableMs: 0,
+      faultToPlayableMs: 50,
+      totalMs: 50,
+    },
   });
   assert.deepEqual(delays, [25, 25]);
 });
@@ -109,6 +119,7 @@ test('configured recovery smoke uses the deployed source control settings', asyn
   }, {
     fetchFn,
     sleepFn: async () => {},
+    nowFn: () => 0,
   });
 
   assert.deepEqual(result, {
@@ -117,6 +128,14 @@ test('configured recovery smoke uses the deployed source control settings', asyn
     reconnectPulls: 1,
     upstreamPulls: 1,
     totalPulls: 11,
+    timings: {
+      disconnectRequestMs: 0,
+      faultToZeroPullMs: null,
+      faultToReconnectMs: 0,
+      reconnectToPlayableMs: 0,
+      faultToPlayableMs: 0,
+      totalMs: 0,
+    },
   });
 });
 

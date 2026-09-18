@@ -166,6 +166,7 @@ export async function runFanoutSmokeTest({
   if (!Number.isInteger(viewers) || viewers < 2) throw new Error('Fanout smoke requires at least two viewers');
   if (typeof fetchFn !== 'function') throw new Error('Fanout smoke requires fetch');
 
+  const startedAt = Number(nowFn());
   const before = await fetchJson(sourceStatsUrl, fetchFn);
   if (Number(before.activePulls) !== 1) {
     throw new Error(`Fanout smoke expected exactly one active upstream pull before viewers, got ${before.activePulls}`);
@@ -228,6 +229,7 @@ export async function runRecoverySmokeTest({
   delayMs = 500,
   fetchFn = globalThis.fetch,
   sleepFn = sleep,
+  nowFn = Date.now,
 }) {
   if (!channelId) throw new Error('Recovery smoke requires channelId');
   if (!hlsBase) throw new Error('Recovery smoke requires hlsBase');
@@ -241,6 +243,7 @@ export async function runRecoverySmokeTest({
     throw new Error(`Recovery smoke expected one active upstream pull before fault, got ${before.activePulls}`);
   }
 
+  const disconnectStartedAt = Number(nowFn());
   const control = await fetchFn(sourceControlUrl, {
     method: 'POST',
     headers: { authorization: `Bearer ${sourceControlToken}` },
@@ -254,13 +257,19 @@ export async function runRecoverySmokeTest({
     throw new Error(`Recovery smoke expected to disconnect one upstream pull, got ${fault?.disconnected ?? 'unknown'}`);
   }
 
+  const faultConfirmedAt = Number(nowFn());
   const rootUrl = smokeUrl(hlsBase, channelId);
   let last = null;
+  let firstZeroPullAt = null;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     await sleepFn(delayMs);
     const current = await fetchJson(sourceStatsUrl, fetchFn);
     last = current;
+    const observedAt = Number(nowFn());
+    if (Number(current.activePulls) === 0 && firstZeroPullAt === null) {
+      firstZeroPullAt = observedAt;
+    }
     const reconnectPulls = Number(current.totalPulls) - Number(before.totalPulls);
 
     if (Number(current.activePulls) !== 1 || reconnectPulls < 1) continue;
@@ -268,13 +277,23 @@ export async function runRecoverySmokeTest({
       throw new Error(`Recovery smoke detected reconnect storm: reconnectPulls=${reconnectPulls}`);
     }
 
+    const reconnectObservedAt = observedAt;
     await consumeOneHlsSegment({ rootUrl, fetchFn });
+    const playableAt = Number(nowFn());
     return {
       ok: true,
       channelId,
       reconnectPulls,
       upstreamPulls: Number(current.activePulls),
       totalPulls: Number(current.totalPulls),
+      timings: {
+        disconnectRequestMs: faultConfirmedAt - disconnectStartedAt,
+        faultToZeroPullMs: firstZeroPullAt === null ? null : firstZeroPullAt - faultConfirmedAt,
+        faultToReconnectMs: reconnectObservedAt - faultConfirmedAt,
+        reconnectToPlayableMs: playableAt - reconnectObservedAt,
+        faultToPlayableMs: playableAt - faultConfirmedAt,
+        totalMs: playableAt - startedAt,
+      },
     };
   }
 

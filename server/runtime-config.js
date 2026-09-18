@@ -49,6 +49,9 @@ export function createRuntime(env = process.env, { fetchFn = globalThis.fetch } 
     onError(error) {
       console.error('V2 source supervisor error', error);
     },
+    onEvent(event) {
+      console.log(`V2 source recovery phase ${JSON.stringify(event)}`);
+    },
   });
   const gateway = createGatewayService({
     registry,

@@ -9,6 +9,7 @@ export function createSourceSupervisor({
   setIntervalFn = globalThis.setInterval,
   clearIntervalFn = globalThis.clearInterval,
   onError = () => {},
+  onEvent = () => {},
 }) {
   if (!registry) throw new Error('source supervisor requires registry');
   if (!mist) throw new Error('source supervisor requires Mist API');
@@ -77,8 +78,27 @@ export function createSourceSupervisor({
     const backoffElapsed = now >= state.nextRecoveryAt;
 
     if (thresholdReached && backoffElapsed) {
+      const recoveryStartedAt = Number(nowFn());
+      onEvent({ type: 'recovery-start', channelId, atMs: recoveryStartedAt });
+
       await mist.nukeStream(channelId);
+      const nukeCompletedAt = Number(nowFn());
+      onEvent({
+        type: 'nuke-complete',
+        channelId,
+        atMs: nukeCompletedAt,
+        durationMs: nukeCompletedAt - recoveryStartedAt,
+      });
+
       await mist.addStream(channelId, entry.source, { always_on: true });
+      const rearmCompletedAt = Number(nowFn());
+      onEvent({
+        type: 'rearm-complete',
+        channelId,
+        atMs: rearmCompletedAt,
+        durationMs: rearmCompletedAt - nukeCompletedAt,
+        recoveryMs: rearmCompletedAt - recoveryStartedAt,
+      });
       state.recoveryAttempts += 1;
       const delay = Math.min(
         maxBackoffMs,

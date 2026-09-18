@@ -23,7 +23,7 @@ app.sourceSupervisor.start();
 
 const recovery = await runConfiguredRecoverySmokeTest(process.env);
 if (recovery) {
-  console.log(`V2 recovery smoke passed channel=${recovery.channelId} reconnectPulls=${recovery.reconnectPulls} upstreamPulls=${recovery.upstreamPulls} totalPulls=${recovery.totalPulls}`);
+  console.log(`V2 recovery smoke passed channel=${recovery.channelId} reconnectPulls=${recovery.reconnectPulls} upstreamPulls=${recovery.upstreamPulls} totalPulls=${recovery.totalPulls} timings=${JSON.stringify(recovery.timings)}`);
 }
 
 app.server.listen(app.port, '0.0.0.0', () => {
