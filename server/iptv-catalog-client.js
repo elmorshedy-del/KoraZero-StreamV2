@@ -38,5 +38,9 @@ export function createIptvCatalogClient({ baseUrl, fetchFn = globalThis.fetch, s
     } while (Date.now() < deadline);
     throw new Error(`Provider slot still busy (${last?.activeConnections ?? 'unknown'}/${last?.maxConnections ?? 'unknown'})`);
   }
-  return Object.freeze({ list, account, waitForFreeSlot });
+  async function stats() {
+    return request('/stats');
+  }
+
+  return Object.freeze({ list, account, waitForFreeSlot, stats });
 }
