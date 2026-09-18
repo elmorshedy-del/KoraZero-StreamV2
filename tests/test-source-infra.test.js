@@ -26,3 +26,8 @@ test('synthetic source does not depend on provider credentials or the legacy rep
   const dockerfile = read('infra/test-source/Dockerfile');
   assert.doesNotMatch(dockerfile, /xtream|provider|morshlive|username|password/i);
 });
+
+test('synthetic source binds IPv6 so Railway private networking can reach it', () => {
+  const dockerfile = read('infra/test-source/Dockerfile');
+  assert.match(dockerfile, /http:\/\/\[::\]:\$\{PORT\}\/live\.ts/);
+});
