@@ -64,6 +64,12 @@ export function createControlServer({ gateway, internalToken, staticRoot = null 
         return sendJson(res, 200, await gateway.catalog());
       }
 
+      const diagnosticChannel = channelFrom(pathname, '/api/diagnostics/');
+      if (req.method === 'GET' && diagnosticChannel) {
+        const diagnostic = gateway.diagnostic?.(diagnosticChannel) || null;
+        return sendJson(res, diagnostic ? 200 : 404, diagnostic || { error: 'diagnostic_not_found' });
+      }
+
       const publicChannel = channelFrom(pathname, '/api/playback/');
       if (req.method === 'GET' && publicChannel) {
         return sendJson(res, 200, await gateway.playback(publicChannel));
@@ -94,10 +100,13 @@ export function createControlServer({ gateway, internalToken, staticRoot = null 
       if (/unknown channel/i.test(message)) {
         return sendJson(res, 404, { error: 'unknown_channel' });
       }
-      if (/provider slot still busy/i.test(message)) {
-        return sendJson(res, 503, { error: 'provider_slot_busy' });
+      if (/provider slot still busy|provider slot did not clear/i.test(message)) {
+        return sendJson(res, 503, { error: 'provider_slot_busy', detail: message });
       }
-      return sendJson(res, 502, { error: 'gateway_error' });
+      if (/playback verification failed/i.test(message)) {
+        return sendJson(res, 502, { error: 'playback_verification_failed', detail: message });
+      }
+      return sendJson(res, 502, { error: 'gateway_error', detail: message });
     }
   });
 }
