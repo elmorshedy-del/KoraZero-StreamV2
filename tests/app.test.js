@@ -173,3 +173,45 @@ test('bootstrap can explicitly warm one smoke channel after lazy registration', 
     { addstream: { 'test-ts': { source: 'https-ts://source.example/live.ts', always_on: true } } },
   ]);
 });
+
+
+test('app bootstrap enforces stable Mist viewer sessions before registering channels', async () => {
+  const commands = [];
+  const fetchFn = async (_url, options) => {
+    const command = JSON.parse(new URLSearchParams(options.body).get('command'));
+    commands.push(command);
+    if (command.config_backup) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            config_backup: {
+              protocols: [{ connector: 'HTTP', port: 8080 }, { connector: 'HLS' }],
+              config: { sessionViewerMode: 14 },
+            },
+          };
+        },
+      };
+    }
+    return { ok: true, status: 200, async json() { return {}; } };
+  };
+  const app = createApp({
+    V2_CHANNELS_JSON: JSON.stringify({
+      'test-hls': { source: 'https://test.invalid/master.m3u8' },
+    }),
+    V2_INTERNAL_TOKEN: 'secret',
+    V2_PUBLIC_HLS_BASE: 'https://media.example/hls',
+    V2_MIST_API_ENDPOINT: 'http://mist.internal:4242/api2',
+  }, { fetchFn });
+
+  await app.bootstrap();
+
+  const modeIndex = commands.findIndex((command) =>
+    command?.config?.sessionViewerMode === 10
+  );
+  const streamIndex = commands.findIndex((command) => command?.addstream?.['test-hls']);
+  assert.notEqual(modeIndex, -1, 'bootstrap must set Mist viewer sessions to stream + token mode');
+  assert.notEqual(streamIndex, -1, 'bootstrap must still register configured streams');
+  assert.ok(modeIndex < streamIndex, 'viewer session identity must be configured before viewer channels are registered');
+});
