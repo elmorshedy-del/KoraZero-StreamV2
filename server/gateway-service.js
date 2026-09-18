@@ -6,6 +6,18 @@ function trimBase(value) {
 
 const CATALOG_STREAM_ID = /^\d+$/;
 
+function abortError(message = 'Operation aborted') {
+  const error = new Error(message);
+  error.name = 'AbortError';
+  return error;
+}
+
+function throwIfAborted(signal) {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  throw abortError();
+}
+
 export function createGatewayService({
   registry,
   mist,
@@ -25,6 +37,8 @@ export function createGatewayService({
 
   let activeCatalogChannel = null;
   let switchTail = Promise.resolve();
+  let activeSwitchController = null;
+  let switchGeneration = 0;
   let attemptSequence = 0;
   const latestAttempts = new Map();
 
@@ -74,11 +88,13 @@ export function createGatewayService({
     if (attempt.events.length > 60) attempt.events.splice(0, attempt.events.length - 60);
   }
 
-  async function catalogEntry(streamId) {
+  async function catalogEntry(streamId, signal = null) {
+    throwIfAborted(signal);
     if (!catalogClient || !relay || !CATALOG_STREAM_ID.test(streamId)) {
       throw new Error(`Unknown channel: ${streamId}`);
     }
-    const catalog = await catalogClient.list();
+    const catalog = await catalogClient.list({ signal });
+    throwIfAborted(signal);
     const entry = catalog.channels.find((channel) => channel.streamId === streamId);
     if (!entry) throw new Error(`Unknown channel: ${streamId}`);
     return entry;
@@ -144,16 +160,25 @@ export function createGatewayService({
     record(attempt, 'failed', { error: attempt.error });
   }
 
-  async function switchCatalogChannel(streamId) {
-    const entry = await catalogEntry(streamId);
+  async function switchCatalogChannel(streamId, { signal = null, generation = 0 } = {}) {
+    throwIfAborted(signal);
+    const entry = await catalogEntry(streamId, signal);
     const mistChannelId = `iptv-${streamId}`;
     const attempt = beginAttempt(streamId, entry.name);
+    record(attempt, 'switch-generation', { generation });
 
     try {
+      throwIfAborted(signal);
       await cleanDynamicMistStreams(attempt);
+      throwIfAborted(signal);
 
       record(attempt, 'provider-slot-wait');
-      const slot = await catalogClient.waitForFreeSlot({ timeoutMs: 30_000, pollMs: 250 });
+      const slot = await catalogClient.waitForFreeSlot({
+        timeoutMs: 30_000,
+        pollMs: 250,
+        signal,
+      });
+      throwIfAborted(signal);
       record(attempt, 'provider-slot-free', {
         activeConnections: slot.activeConnections,
         maxConnections: slot.maxConnections,
@@ -163,6 +188,7 @@ export function createGatewayService({
       record(attempt, 'mist-add', { channelId: mistChannelId });
       await mist.addStream(mistChannelId, source, { always_on: true });
       activeCatalogChannel = { streamId, mistChannelId };
+      throwIfAborted(signal);
 
       const result = descriptor(mistChannelId, {
         streamId,
@@ -175,7 +201,9 @@ export function createGatewayService({
       const verification = await playbackProbeFn({
         manifestUrl: result.manifestUrl,
         fetchFn,
+        signal,
       });
+      throwIfAborted(signal);
       attempt.verification = verification;
       attempt.ok = true;
       attempt.finishedAt = new Date().toISOString();
@@ -186,8 +214,10 @@ export function createGatewayService({
 
       let relayStats = null;
       try {
-        relayStats = await catalogClient.stats();
-      } catch {}
+        relayStats = await catalogClient.stats({ signal });
+      } catch (error) {
+        if (signal?.aborted) throw error;
+      }
       const streamRelayStats = relayStats?.streams?.[streamId] || null;
 
       return {
@@ -204,16 +234,63 @@ export function createGatewayService({
       };
     } catch (error) {
       await failAttempt(attempt, error, mistChannelId);
+      if (error?.name === 'AbortError' || signal?.aborted) {
+        record(attempt, 'cancelled', {
+          reason: error instanceof Error ? error.message : String(error),
+          generation,
+        });
+        throw error?.name === 'AbortError' ? error : abortError('Channel switch cancelled');
+      }
       throw new Error(`Playback verification failed at ${attempt.phase}: ${attempt.error}`);
     }
   }
 
-  function queueCatalogSwitch(streamId) {
-    const run = switchTail.then(
-      () => switchCatalogChannel(streamId),
-      () => switchCatalogChannel(streamId),
-    );
+  function queueCatalogSwitch(streamId, externalSignal = null) {
+    const generation = ++switchGeneration;
+
+    if (activeSwitchController && !activeSwitchController.signal.aborted) {
+      activeSwitchController.abort(abortError('Superseded by newer channel selection'));
+    }
+
+    const controller = new AbortController();
+    activeSwitchController = controller;
+
+    const onExternalAbort = () => {
+      if (!controller.signal.aborted) {
+        controller.abort(
+          externalSignal?.reason instanceof Error
+            ? externalSignal.reason
+            : abortError('Client closed playback request'),
+        );
+      }
+    };
+    if (externalSignal) {
+      if (externalSignal.aborted) onExternalAbort();
+      else externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+
+    const execute = async () => {
+      throwIfAborted(controller.signal);
+      return switchCatalogChannel(streamId, {
+        signal: controller.signal,
+        generation,
+      });
+    };
+
+    const run = switchTail.then(execute, execute);
     switchTail = run.catch(() => {});
+
+    run.then(
+      () => {
+        externalSignal?.removeEventListener?.('abort', onExternalAbort);
+        if (activeSwitchController === controller) activeSwitchController = null;
+      },
+      () => {
+        externalSignal?.removeEventListener?.('abort', onExternalAbort);
+        if (activeSwitchController === controller) activeSwitchController = null;
+      },
+    );
+
     return run;
   }
 
@@ -227,15 +304,15 @@ export function createGatewayService({
       return latestAttempts.get(String(streamId)) || null;
     },
 
-    async playback(channelId) {
+    async playback(channelId, { signal = null } = {}) {
       if (registry.has(channelId)) return staticPlayback(channelId);
-      if (CATALOG_STREAM_ID.test(channelId)) return queueCatalogSwitch(channelId);
+      if (CATALOG_STREAM_ID.test(channelId)) return queueCatalogSwitch(channelId, signal);
       throw new Error(`Unknown channel: ${channelId}`);
     },
 
     async activate(channelId) {
       if (!registry.has(channelId) && CATALOG_STREAM_ID.test(channelId)) {
-        return queueCatalogSwitch(channelId);
+        return queueCatalogSwitch(channelId, null);
       }
       const entry = staticChannel(channelId);
       await mist.addStream(channelId, entry.source, { always_on: true });
