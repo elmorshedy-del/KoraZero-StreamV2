@@ -518,6 +518,12 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
             }
           } catch (error) {
             release();
+            if (error?.name === 'AbortError') {
+              log({ event: 'stream-cancelled', streamId: requestedStreamId });
+              return;
+            }
+            currentStreamStats.lastError = cleanCatalogText(error?.message || String(error), 240);
+            log({ event: 'stream-body-error', streamId: requestedStreamId, error: currentStreamStats.lastError });
             out.error(error);
           }
         },
@@ -538,6 +544,12 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
         },
       });
     } catch (error) {
+      if (error?.name === 'AbortError') {
+        log({ event: 'upstream-cancelled', streamId: requestedStreamId });
+        release();
+        controller.abort();
+        return new Response('Upstream aborted', { status: 502 });
+      }
       currentStreamStats.lastError = cleanCatalogText(error?.message || String(error), 240);
       log({ event: 'upstream-error', streamId: requestedStreamId, error: currentStreamStats.lastError });
       if (stats.lastStatus == null || currentStreamStats.successfulProviderOpens < currentStreamStats.providerAttempts - currentStreamStats.failedProviderOpens) {
@@ -546,7 +558,6 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
       }
       release();
       controller.abort();
-      if (error?.name === 'AbortError') return new Response('Upstream aborted', { status: 502 });
       throw error;
     }
   }
