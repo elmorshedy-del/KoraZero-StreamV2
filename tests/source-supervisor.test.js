@@ -26,6 +26,7 @@ function fixture(statuses, { now = 0 } = {}) {
     mist,
     unhealthyThreshold: 2,
     nativeRecoveryGraceMs: 0,
+    postRearmGraceMs: 0,
     baseBackoffMs: 2000,
     maxBackoffMs: 8000,
     nowFn: () => clock,
