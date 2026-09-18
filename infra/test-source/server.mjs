@@ -29,8 +29,32 @@ const FFMPEG_ARGS = Object.freeze([
 ]);
 
 export function createSyntheticTsServer({ spawnFn = spawn } = {}) {
+  const stats = {
+    activePulls: 0,
+    totalPulls: 0,
+    maxConcurrentPulls: 0,
+    headRequests: 0,
+  };
+
   return createServer((req, res) => {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+
+    if (url.pathname === '/stats') {
+      if (req.method !== 'GET') {
+        res.writeHead(405, { allow: 'GET' });
+        res.end();
+        return;
+      }
+      const body = JSON.stringify(stats);
+      res.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'content-length': Buffer.byteLength(body),
+        'cache-control': 'no-store',
+      });
+      res.end(body);
+      return;
+    }
+
     if (url.pathname !== '/live.ts') {
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
       res.end('Not found');
@@ -38,6 +62,7 @@ export function createSyntheticTsServer({ spawnFn = spawn } = {}) {
     }
 
     if (req.method === 'HEAD') {
+      stats.headRequests += 1;
       res.writeHead(200, {
         'content-type': TS_CONTENT_TYPE,
         'cache-control': 'no-store',
@@ -51,6 +76,10 @@ export function createSyntheticTsServer({ spawnFn = spawn } = {}) {
       res.end();
       return;
     }
+
+    stats.totalPulls += 1;
+    stats.activePulls += 1;
+    stats.maxConcurrentPulls = Math.max(stats.maxConcurrentPulls, stats.activePulls);
 
     res.writeHead(200, {
       'content-type': TS_CONTENT_TYPE,
@@ -66,6 +95,7 @@ export function createSyntheticTsServer({ spawnFn = spawn } = {}) {
     const stop = () => {
       if (stopped) return;
       stopped = true;
+      stats.activePulls = Math.max(0, stats.activePulls - 1);
       child.kill?.('SIGTERM');
     };
 
@@ -79,6 +109,7 @@ export function createSyntheticTsServer({ spawnFn = spawn } = {}) {
     });
     child.on?.('exit', () => {
       if (!res.writableEnded) res.end();
+      stop();
     });
 
     req.on('aborted', stop);
