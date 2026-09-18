@@ -35,6 +35,7 @@ export async function probeHlsPlayback({
   attempts = 10,
   delayMs = 500,
   timeoutMs = 5_000,
+  signal = null,
 } = {}) {
   if (!manifestUrl) throw new Error('playback probe requires manifestUrl');
   if (typeof fetchFn !== 'function') throw new Error('playback probe requires fetch');
@@ -42,12 +43,27 @@ export async function probeHlsPlayback({
   const startedAt = Date.now();
   let last = 'no attempt';
 
+  function timeoutSignal() {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    return signal ? AbortSignal.any([signal, timeout]) : timeout;
+  }
+
+  function throwIfAborted() {
+    if (signal?.aborted) {
+      if (signal.reason instanceof Error) throw signal.reason;
+      const error = new Error('Playback verification aborted');
+      error.name = 'AbortError';
+      throw error;
+    }
+  }
+
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    throwIfAborted();
     try {
       const rootStartedAt = Date.now();
       const root = await fetchFn(manifestUrl, {
         cache: 'no-store',
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: timeoutSignal(),
       });
       const rootText = await root.text();
       const rootFetchMs = Date.now() - rootStartedAt;
@@ -63,7 +79,7 @@ export async function probeHlsPlayback({
         const variantStartedAt = Date.now();
         const media = await fetchFn(mediaUrl, {
           cache: 'no-store',
-          signal: AbortSignal.timeout(timeoutMs),
+          signal: timeoutSignal(),
         });
         mediaText = await media.text();
         variantFetchMs = Date.now() - variantStartedAt;
@@ -76,7 +92,7 @@ export async function probeHlsPlayback({
       const segmentStartedAt = Date.now();
       const segment = await fetchFn(segmentUrl, {
         cache: 'no-store',
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: timeoutSignal(),
       });
       if (!segment.ok) throw new Error(`segment HTTP ${segment.status}`);
       const bytes = await segment.arrayBuffer();
@@ -92,8 +108,21 @@ export async function probeHlsPlayback({
         totalMs: Date.now() - startedAt,
       };
     } catch (error) {
+      if (signal?.aborted || error?.name === 'AbortError') throw error;
       last = error instanceof Error ? error.message : String(error);
-      if (attempt < attempts) await sleepFn(delayMs);
+      if (attempt < attempts) {
+        if (!signal) {
+          await sleepFn(delayMs);
+        } else {
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(resolve, delayMs);
+            signal.addEventListener('abort', () => {
+              clearTimeout(timer);
+              reject(signal.reason instanceof Error ? signal.reason : new DOMException('Aborted', 'AbortError'));
+            }, { once: true });
+          });
+        }
+      }
     }
   }
 
