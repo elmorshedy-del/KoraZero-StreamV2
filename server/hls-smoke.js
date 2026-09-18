@@ -216,3 +216,69 @@ export async function runConfiguredFanoutSmokeTest(env = process.env, options = 
     ...options,
   });
 }
+
+
+export async function runRecoverySmokeTest({
+  channelId,
+  hlsBase,
+  sourceStatsUrl,
+  sourceControlUrl,
+  sourceControlToken,
+  attempts = 12,
+  delayMs = 500,
+  fetchFn = globalThis.fetch,
+  sleepFn = sleep,
+}) {
+  if (!channelId) throw new Error('Recovery smoke requires channelId');
+  if (!hlsBase) throw new Error('Recovery smoke requires hlsBase');
+  if (!sourceStatsUrl) throw new Error('Recovery smoke requires sourceStatsUrl');
+  if (!sourceControlUrl) throw new Error('Recovery smoke requires sourceControlUrl');
+  if (!sourceControlToken) throw new Error('Recovery smoke requires sourceControlToken');
+  if (!Number.isInteger(attempts) || attempts < 1) throw new Error('Recovery smoke requires attempts >= 1');
+
+  const before = await fetchJson(sourceStatsUrl, fetchFn);
+  if (Number(before.activePulls) !== 1) {
+    throw new Error(`Recovery smoke expected one active upstream pull before fault, got ${before.activePulls}`);
+  }
+
+  const control = await fetchFn(sourceControlUrl, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${sourceControlToken}` },
+    cache: 'no-store',
+  });
+  if (!control?.ok) {
+    throw new Error(`Recovery disconnect request failed with HTTP ${control?.status ?? 'unknown'}`);
+  }
+  const fault = await control.json();
+  if (Number(fault?.disconnected) !== 1) {
+    throw new Error(`Recovery smoke expected to disconnect one upstream pull, got ${fault?.disconnected ?? 'unknown'}`);
+  }
+
+  const rootUrl = smokeUrl(hlsBase, channelId);
+  let last = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    await sleepFn(delayMs);
+    const current = await fetchJson(sourceStatsUrl, fetchFn);
+    last = current;
+    const reconnectPulls = Number(current.totalPulls) - Number(before.totalPulls);
+
+    if (Number(current.activePulls) !== 1 || reconnectPulls < 1) continue;
+    if (reconnectPulls !== 1) {
+      throw new Error(`Recovery smoke detected reconnect storm: reconnectPulls=${reconnectPulls}`);
+    }
+
+    await consumeOneHlsSegment({ rootUrl, fetchFn });
+    return {
+      ok: true,
+      channelId,
+      reconnectPulls,
+      upstreamPulls: Number(current.activePulls),
+      totalPulls: Number(current.totalPulls),
+    };
+  }
+
+  throw new Error(
+    `Recovery smoke did not restore one upstream pull within ${attempts} attempts; lastActive=${last?.activePulls ?? 'unknown'} lastTotal=${last?.totalPulls ?? 'unknown'}`,
+  );
+}
