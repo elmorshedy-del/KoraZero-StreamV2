@@ -172,3 +172,42 @@ test('advancing media clock remains healthy and never resets the source', async 
   assert.equal(state.recoveryAttempts, 0);
   assert.equal(f.calls.some(([name]) => name === 'nukeStream'), false);
 });
+
+
+test('supervisor emits recovery phase timings around nuke and re-arm', async () => {
+  let now = 5000;
+  const events = [];
+  const registry = createChannelRegistry({
+    'test-ts': { source: 'http://source.internal/live.ts' },
+  });
+  const statuses = [
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+    { active: true, inputs: 1, lastms: 10000 },
+  ];
+  const mist = {
+    async getStream() { return statuses.shift(); },
+    async nukeStream() { now += 5200; },
+    async addStream() { now += 300; },
+  };
+
+  const supervisor = createSourceSupervisor({
+    registry,
+    mist,
+    unhealthyThreshold: 2,
+    nowFn: () => now,
+    onEvent(event) { events.push(event); },
+  });
+
+  await supervisor.check('test-ts');
+  now += 1000;
+  await supervisor.check('test-ts');
+  now += 1000;
+  await supervisor.check('test-ts');
+
+  assert.deepEqual(events, [
+    { type: 'recovery-start', channelId: 'test-ts', atMs: 7000 },
+    { type: 'nuke-complete', channelId: 'test-ts', atMs: 12200, durationMs: 5200 },
+    { type: 'rearm-complete', channelId: 'test-ts', atMs: 12500, durationMs: 300, recoveryMs: 5500 },
+  ]);
+});

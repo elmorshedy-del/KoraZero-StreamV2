@@ -119,3 +119,61 @@ test('configured recovery smoke uses the deployed source control settings', asyn
     totalPulls: 11,
   });
 });
+
+
+test('recovery smoke reports phase timings without changing recovery behavior', async () => {
+  const statsUrl = 'http://source.internal/stats';
+  const controlUrl = 'http://source.internal/control/disconnect';
+  const root = 'http://mist.internal/hls/test-ts/index.m3u8';
+  const segment = 'http://mist.internal/hls/test-ts/1000_3000.ts';
+  const stats = [
+    { activePulls: 1, totalPulls: 7 },
+    { activePulls: 0, totalPulls: 7 },
+    { activePulls: 1, totalPulls: 8 },
+  ];
+  let now = 1000;
+
+  const fetchFn = async (url) => {
+    if (url === statsUrl) {
+      now += 5;
+      return response(stats.shift());
+    }
+    if (url === controlUrl) {
+      now += 40;
+      return response({ disconnected: 1 });
+    }
+    if (url === root) {
+      now += 30;
+      return response('#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\n1000_3000.ts\n', {
+        contentType: 'application/vnd.apple.mpegurl',
+      });
+    }
+    if (url === segment) {
+      now += 50;
+      return response('media-after-recovery', { contentType: 'video/mp2t' });
+    }
+    throw new Error(`unexpected URL: ${url}`);
+  };
+
+  const result = await smoke.runRecoverySmokeTest({
+    channelId: 'test-ts',
+    hlsBase: 'http://mist.internal/hls',
+    sourceStatsUrl: statsUrl,
+    sourceControlUrl: controlUrl,
+    sourceControlToken: 'fault-secret',
+    attempts: 3,
+    delayMs: 25,
+    fetchFn,
+    sleepFn: async (ms) => { now += ms; },
+    nowFn: () => now,
+  });
+
+  assert.deepEqual(result.timings, {
+    disconnectRequestMs: 40,
+    faultToZeroPullMs: 30,
+    faultToReconnectMs: 60,
+    reconnectToPlayableMs: 80,
+    faultToPlayableMs: 140,
+    totalMs: 185,
+  });
+});
