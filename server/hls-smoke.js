@@ -128,19 +128,23 @@ function firstMediaUri(body) {
   return null;
 }
 
-async function consumeOneHlsSegment({ rootUrl, fetchFn }) {
+async function consumeOneHlsSegment({ rootUrl, fetchFn, nowFn = Date.now }) {
+  const startedAt = Number(nowFn());
   const rootResponse = await fetchFn(rootUrl, { cache: 'no-store' });
   if (!rootResponse?.ok) throw new Error(`Fanout root playlist failed with HTTP ${rootResponse?.status ?? 'unknown'}`);
   const rootBody = await rootResponse.text();
+  const rootPlaylistAt = Number(nowFn());
 
   let mediaUrl = rootUrl;
   let mediaBody = rootBody;
+  let mediaPlaylistAt = rootPlaylistAt;
   const variant = masterVariantUri(rootBody);
   if (variant) {
     mediaUrl = new URL(variant, rootUrl).toString();
     const mediaResponse = await fetchFn(mediaUrl, { cache: 'no-store' });
     if (!mediaResponse?.ok) throw new Error(`Fanout media playlist failed with HTTP ${mediaResponse?.status ?? 'unknown'}`);
     mediaBody = await mediaResponse.text();
+    mediaPlaylistAt = Number(nowFn());
   }
 
   const segment = firstMediaUri(mediaBody);
@@ -150,7 +154,16 @@ async function consumeOneHlsSegment({ rootUrl, fetchFn }) {
   if (!segmentResponse?.ok) throw new Error(`Fanout segment failed with HTTP ${segmentResponse?.status ?? 'unknown'}`);
   const bytes = await segmentResponse.arrayBuffer();
   if (!bytes || bytes.byteLength < 1) throw new Error('Fanout segment was empty');
-  return bytes.byteLength;
+  const segmentAt = Number(nowFn());
+  return {
+    bytes: bytes.byteLength,
+    timings: {
+      rootPlaylistFetchMs: rootPlaylistAt - startedAt,
+      mediaPlaylistFetchMs: mediaPlaylistAt - rootPlaylistAt,
+      segmentFetchMs: segmentAt - mediaPlaylistAt,
+      totalMs: segmentAt - startedAt,
+    },
+  };
 }
 
 export async function runFanoutSmokeTest({
@@ -297,7 +310,7 @@ export async function runRecoverySmokeTest({
     }
 
     const reconnectObservedAt = observedAt;
-    await consumeOneHlsSegment({ rootUrl, fetchFn });
+    const hls = await consumeOneHlsSegment({ rootUrl, fetchFn, nowFn });
     const playableAt = Number(nowFn());
     return {
       ok: true,
@@ -309,6 +322,9 @@ export async function runRecoverySmokeTest({
         disconnectRequestMs: faultConfirmedAt - disconnectStartedAt,
         faultToZeroPullMs: firstZeroPullAt === null ? null : firstZeroPullAt - faultConfirmedAt,
         faultToReconnectMs: reconnectObservedAt - faultConfirmedAt,
+        reconnectToRootPlaylistMs: hls.timings.rootPlaylistFetchMs,
+        rootPlaylistToMediaPlaylistMs: hls.timings.mediaPlaylistFetchMs,
+        mediaPlaylistToSegmentMs: hls.timings.segmentFetchMs,
         reconnectToPlayableMs: playableAt - reconnectObservedAt,
         faultToPlayableMs: playableAt - faultConfirmedAt,
         totalMs: playableAt - startedAt,
