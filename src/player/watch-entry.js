@@ -13,6 +13,7 @@ const categoryEl = document.querySelector('#catalog-category');
 const listEl = document.querySelector('#catalog-list');
 const countEl = document.querySelector('#catalog-count');
 const moreEl = document.querySelector('#catalog-more');
+const diagnosticEl = document.querySelector('#channel-diagnostic');
 
 const PAGE_SIZE = 150;
 let catalog = [];
@@ -64,9 +65,20 @@ async function selectChannel(channel, { updateUrl = true } = {}) {
   renderCatalog();
   titleEl.textContent = channel.name;
   messageEl.textContent = 'جاري تبديل القناة…';
+  if (diagnosticEl) diagnosticEl.textContent = 'VERIFYING…';
   controller.stop();
   try {
     const descriptor = await fetchPlaybackDescriptor(channel.streamId);
+    if (diagnosticEl) {
+      const d = descriptor.diagnostics || {};
+      const kb = Number.isFinite(Number(d.segmentBytes)) ? Math.round(Number(d.segmentBytes) / 1024) : null;
+      const mode = d.transportMode || 'unknown';
+      const ms = Number.isFinite(Number(d.verificationMs)) ? Math.round(Number(d.verificationMs)) : null;
+      const attempt = d.attemptId ? ` · ${d.attemptId}` : '';
+      diagnosticEl.textContent = descriptor.verified
+        ? `VERIFIED · ${mode}${kb !== null ? ` · ${kb} KB` : ''}${ms !== null ? ` · ${ms} ms` : ''}${attempt}`
+        : 'UNVERIFIED';
+    }
     controller.load(descriptor);
     if (updateUrl) {
       const url = new URL(location.href);
@@ -75,7 +87,21 @@ async function selectChannel(channel, { updateUrl = true } = {}) {
       history.replaceState(null, '', url);
     }
   } catch (error) {
-    messageEl.textContent = error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    messageEl.textContent = errorMessage;
+    if (diagnosticEl) {
+      try {
+        const response = await fetch(`/api/diagnostics/${encodeURIComponent(channel.streamId)}`, {
+          headers: { accept: 'application/json' },
+        });
+        const diagnostic = response.ok ? await response.json() : null;
+        diagnosticEl.textContent = diagnostic
+          ? `FAILED · ${diagnostic.phase || 'unknown'} · ${diagnostic.error || errorMessage} · ${diagnostic.attemptId || ''}`
+          : `FAILED · ${errorMessage}`;
+      } catch {
+        diagnosticEl.textContent = `FAILED · ${errorMessage}`;
+      }
+    }
   }
 }
 
