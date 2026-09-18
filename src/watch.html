@@ -14,25 +14,23 @@
     <div class="container nav">
       <a class="logo" href="./watch.html" aria-label="KoraZero">Kora<b>Zero</b></a>
       <span class="badge">Stream V2</span>
-      <span class="nav-note">Clean streaming prototype · isolated from production</span>
+      <span class="nav-note">Full IPTV catalog · one upstream test at a time</span>
     </div>
   </header>
-
   <main class="watch-wrap">
     <div class="container">
       <div class="watch-head">
         <div>
-          <h1 class="watch-title" id="channel-title">البث المباشر</h1>
-          <p class="watch-subtitle">مشغل جديد مستقل — HLS فقط في المتصفح</p>
+          <h1 class="watch-title" id="channel-title">اختر قناة للتجربة</h1>
+          <p class="watch-subtitle">كل القنوات من الكتالوج — التبديل يوقف القناة السابقة أولاً</p>
         </div>
         <span class="badge" id="player-state">IDLE</span>
       </div>
-
       <div class="layout">
         <section class="card">
           <div class="player-shell" id="player-shell">
             <video id="live-video" controls playsinline preload="metadata"></video>
-            <div class="player-overlay"><span class="player-status" id="player-message">لم يبدأ البث</span></div>
+            <div class="player-overlay"><span class="player-status" id="player-message">اختر قناة من القائمة</span></div>
           </div>
           <div class="panel-body">
             <div class="info-grid">
@@ -42,15 +40,21 @@
             </div>
           </div>
         </section>
-
-        <aside class="card side-card">
-          <h2>V2 isolation</h2>
-          <p>This page intentionally contains no inherited KoraZero streaming behavior. The browser receives only a V2 playback descriptor and an HLS manifest owned by the new gateway.</p>
+        <aside class="card catalog-card">
+          <div class="catalog-head">
+            <h2>كتالوج القنوات</h2>
+            <p id="catalog-count">جاري تحميل الكتالوج…</p>
+          </div>
+          <div class="catalog-controls">
+            <input id="catalog-search" type="search" autocomplete="off" placeholder="ابحث عن قناة…" />
+            <select id="catalog-category" aria-label="فلتر الفئة"><option value="">كل الفئات</option></select>
+          </div>
+          <div class="catalog-list" id="catalog-list" aria-live="polite"></div>
+          <button class="catalog-more" id="catalog-more" type="button" hidden>عرض المزيد</button>
         </aside>
       </div>
     </div>
   </main>
-
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.13/dist/hls.min.js"></script>
   <script type="module" src="./player/watch-entry.js"></script>
 </body>
