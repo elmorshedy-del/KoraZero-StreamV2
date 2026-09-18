@@ -6,10 +6,11 @@ function validDescriptor(value) {
     && value.manifestUrl.length > 0;
 }
 
-export async function fetchPlaybackDescriptor(channelId, { fetchFn = globalThis.fetch } = {}) {
+export async function fetchPlaybackDescriptor(channelId, { fetchFn = globalThis.fetch, signal = null } = {}) {
   if (!channelId) throw new Error('channelId is required');
   const response = await fetchFn(`/api/playback/${encodeURIComponent(channelId)}`, {
     headers: { accept: 'application/json' },
+    signal: signal || undefined,
   });
   if (!response?.ok) {
     let detail = null;
