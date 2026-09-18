@@ -52,6 +52,13 @@ export function createSyntheticTsServer({ spawnFn = spawn } = {}) {
       return;
     }
 
+    res.writeHead(200, {
+      'content-type': TS_CONTENT_TYPE,
+      'cache-control': 'no-store',
+      connection: 'keep-alive',
+    });
+    res.flushHeaders?.();
+
     const child = spawnFn('ffmpeg', [...FFMPEG_ARGS], {
       stdio: ['ignore', 'pipe', 'inherit'],
     });
@@ -61,12 +68,6 @@ export function createSyntheticTsServer({ spawnFn = spawn } = {}) {
       stopped = true;
       child.kill?.('SIGTERM');
     };
-
-    res.writeHead(200, {
-      'content-type': TS_CONTENT_TYPE,
-      'cache-control': 'no-store',
-      connection: 'keep-alive',
-    });
 
     child.stdout.on?.('error', (error) => {
       if (!res.destroyed) res.destroy(error);

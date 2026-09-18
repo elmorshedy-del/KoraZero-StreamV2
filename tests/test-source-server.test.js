@@ -53,3 +53,27 @@ test('GET /live.ts starts an H264 AAC MPEG-TS generator and streams bytes', asyn
   assert.match(joined, /-f mpegts/);
   assert.match(joined, /pipe:1/);
 });
+
+test('GET /live.ts flushes HTTP headers before ffmpeg emits its first media byte', async () => {
+  const { PassThrough } = await import('node:stream');
+  const stdout = new PassThrough();
+  const spawnFn = () => ({
+    stdout,
+    kill() {},
+    on() {},
+  });
+
+  await withServer(spawnFn, async (base) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 150);
+    try {
+      const response = await fetch(`${base}/live.ts`, { signal: controller.signal });
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get('content-type') || '', /video\/mp2t/);
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+      stdout.destroy();
+    }
+  });
+});
