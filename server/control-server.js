@@ -60,9 +60,13 @@ export function createControlServer({ gateway, internalToken, staticRoot = null 
     const { pathname } = url;
 
     try {
+      if (req.method === 'GET' && pathname === '/api/catalog') {
+        return sendJson(res, 200, await gateway.catalog());
+      }
+
       const publicChannel = channelFrom(pathname, '/api/playback/');
       if (req.method === 'GET' && publicChannel) {
-        return sendJson(res, 200, gateway.playback(publicChannel));
+        return sendJson(res, 200, await gateway.playback(publicChannel));
       }
 
       if (pathname.startsWith('/internal/')) {
@@ -89,6 +93,9 @@ export function createControlServer({ gateway, internalToken, staticRoot = null 
       const message = error instanceof Error ? error.message : String(error);
       if (/unknown channel/i.test(message)) {
         return sendJson(res, 404, { error: 'unknown_channel' });
+      }
+      if (/provider slot still busy/i.test(message)) {
+        return sendJson(res, 503, { error: 'provider_slot_busy' });
       }
       return sendJson(res, 502, { error: 'gateway_error' });
     }
