@@ -109,6 +109,9 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
     maxConcurrentPulls: 0,
     rejectedConcurrentPulls: 0,
     lastStatus: null,
+    providerAttempts: 0,
+    successfulProviderOpens: 0,
+    failedProviderOpens: 0,
     realBytes: 0,
     keepaliveBursts: 0,
     keepaliveBytes: 0,
@@ -171,6 +174,7 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
 
     const target = `${portal}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${allowedStreamId}.ts`;
     try {
+      stats.providerAttempts += 1;
       const upstream = await fetchFn(target, {
         method: 'GET',
         headers: {
@@ -183,11 +187,13 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
       });
       stats.lastStatus = upstream.status;
       if (!upstream.ok || !upstream.body) {
+        stats.failedProviderOpens += 1;
         release();
         controller.abort();
         return new Response(`Upstream error ${upstream.status}`, { status: 502, headers: { 'cache-control': 'no-store' } });
       }
 
+      stats.successfulProviderOpens += 1;
       let finalHost = null;
       try { finalHost = upstream.url ? new URL(upstream.url).host : null; } catch {}
       log({ event: 'upstream-open', streamId: allowedStreamId, status: upstream.status, finalHost });
@@ -264,6 +270,9 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
         },
       });
     } catch (error) {
+      if (stats.lastStatus == null || stats.successfulProviderOpens < stats.providerAttempts - stats.failedProviderOpens) {
+        stats.failedProviderOpens += 1;
+      }
       release();
       controller.abort();
       if (error?.name === 'AbortError') return new Response('Upstream aborted', { status: 502 });
