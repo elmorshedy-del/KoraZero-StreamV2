@@ -8,6 +8,9 @@ export function createSourceSupervisor({
   intervalMs = 1000,
   setIntervalFn = globalThis.setInterval,
   clearIntervalFn = globalThis.clearInterval,
+  sleepFn = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  inputExitPollMs = 100,
+  inputExitTimeoutMs = 2000,
   onError = () => {},
   onEvent = () => {},
 }) {
@@ -18,6 +21,12 @@ export function createSourceSupervisor({
   }
   if (!Number.isFinite(intervalMs) || intervalMs < 1) {
     throw new Error('intervalMs must be >= 1');
+  }
+  if (!Number.isFinite(inputExitPollMs) || inputExitPollMs < 1) {
+    throw new Error('inputExitPollMs must be >= 1');
+  }
+  if (!Number.isFinite(inputExitTimeoutMs) || inputExitTimeoutMs < 1) {
+    throw new Error('inputExitTimeoutMs must be >= 1');
   }
 
   const states = new Map();
@@ -41,6 +50,20 @@ export function createSourceSupervisor({
 
   function snapshot(state) {
     return { ...state };
+  }
+
+  async function waitForInputExit(channelId) {
+    const deadline = Number(nowFn()) + inputExitTimeoutMs;
+    while (true) {
+      const status = await mist.getStream(channelId);
+      if (Number(status?.inputs ?? 0) === 0) return;
+
+      const now = Number(nowFn());
+      if (now >= deadline) {
+        throw new Error(`Mist input did not exit after nuke for ${channelId}`);
+      }
+      await sleepFn(Math.min(inputExitPollMs, Math.max(1, deadline - now)));
+    }
   }
 
   async function check(channelId) {
@@ -90,6 +113,7 @@ export function createSourceSupervisor({
         durationMs: nukeCompletedAt - recoveryStartedAt,
       });
 
+      await waitForInputExit(channelId);
       await mist.addStream(channelId, entry.source, { always_on: true });
       const rearmCompletedAt = Number(nowFn());
       onEvent({

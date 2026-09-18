@@ -211,3 +211,53 @@ test('supervisor emits recovery phase timings around nuke and re-arm', async () 
     { type: 'rearm-complete', channelId: 'test-ts', atMs: 12500, durationMs: 300, recoveryMs: 5500 },
   ]);
 });
+
+
+test('recovery waits for the nuked Mist input to exit before re-arming', async () => {
+  const calls = [];
+  const statuses = [
+    { active: true, inputs: 0 },
+    { active: true, inputs: 0 },
+    { active: true, inputs: 1 },
+    { active: true, inputs: 0 },
+  ];
+  const registry = createChannelRegistry({
+    'test-ts': { source: 'http://source.internal/live.ts' },
+  });
+  const mist = {
+    async getStream(channelId) {
+      calls.push(['getStream', channelId]);
+      return statuses.shift() ?? { active: true, inputs: 0 };
+    },
+    async nukeStream(channelId) {
+      calls.push(['nukeStream', channelId]);
+    },
+    async addStream(channelId, source, options) {
+      calls.push(['addStream', channelId, source, options]);
+    },
+  };
+
+  const supervisor = createSourceSupervisor({
+    registry,
+    mist,
+    unhealthyThreshold: 2,
+    inputExitPollMs: 50,
+    inputExitTimeoutMs: 500,
+    sleepFn: async (ms) => {
+      calls.push(['sleep', ms]);
+    },
+  });
+
+  await supervisor.check('test-ts');
+  await supervisor.check('test-ts');
+
+  assert.deepEqual(calls, [
+    ['getStream', 'test-ts'],
+    ['getStream', 'test-ts'],
+    ['nukeStream', 'test-ts'],
+    ['getStream', 'test-ts'],
+    ['sleep', 50],
+    ['getStream', 'test-ts'],
+    ['addStream', 'test-ts', 'http://source.internal/live.ts', { always_on: true }],
+  ]);
+});
