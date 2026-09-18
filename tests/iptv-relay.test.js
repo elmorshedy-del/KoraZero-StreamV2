@@ -441,3 +441,94 @@ test('relay can enforce one total provider pull while catalog testing', async ()
   assert.equal(relay.stats().maxConcurrentPulls, 1);
   await first.body.cancel();
 });
+
+
+test('relay normalizes an HLS-backed provider stream into MPEG-TS for Mist', async () => {
+  const calls = [];
+  const segmentBytes = concat(tsPacket(300, 0), tsPacket(300, 1));
+  const playlist = [
+    '#EXTM3U',
+    '#EXT-X-TARGETDURATION:2',
+    '#EXT-X-MEDIA-SEQUENCE:42',
+    '#EXTINF:2.0,',
+    'segment-42.ts',
+    '#EXT-X-ENDLIST',
+    '',
+  ].join('\n');
+
+  const relay = createIptvRelay(env, {
+    fetchFn: async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      if (String(url).includes('/player_api.php')) {
+        return new Response(JSON.stringify({
+          user_info: {
+            auth: 1,
+            status: 'Active',
+            active_cons: '0',
+            max_connections: '1',
+            allowed_output_formats: ['m3u8', 'ts'],
+          },
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (String(url).endsWith('/3974.ts') && options.headers?.Range === 'bytes=0-') {
+        return new Response(playlist, {
+          status: 206,
+          headers: {
+            'content-type': 'application/vnd.apple.mpegurl',
+            'content-range': 'bytes 0-266/267',
+          },
+        });
+      }
+      if (String(url).endsWith('/segment-42.ts')) {
+        return new Response(segmentBytes, {
+          status: 200,
+          headers: { 'content-type': 'video/mp2t' },
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    },
+  });
+
+  const response = await relay.handle({ method: 'GET', pathname: '/live/3974.ts' });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'video/mp2t');
+  assert.equal(response.headers.get('x-kz-transport'), 'hls-to-ts');
+
+  const output = new Uint8Array(await response.arrayBuffer());
+  assert.deepEqual(output, segmentBytes);
+
+  const stats = relay.stats().streams['3974'];
+  assert.equal(stats.transportMode, 'hls-to-ts');
+  assert.equal(stats.upstreamContentType, 'application/vnd.apple.mpegurl');
+  assert.equal(stats.playlistFetches, 1);
+  assert.equal(stats.segmentFetches, 1);
+  assert.equal(stats.segmentBytes, segmentBytes.length);
+  assert.equal(stats.lastSegmentStatus, 200);
+  assert.equal(stats.lastSegmentContentType, 'video/mp2t');
+  assert.ok(Number.isFinite(stats.firstMediaByteMs));
+  assert.ok(stats.lastMediaAt);
+  assert.equal(stats.lastError, null);
+
+  assert.equal(calls.filter((call) => call.url.endsWith('/3974.ts')).length, 1);
+  assert.equal(calls.filter((call) => call.url.endsWith('/segment-42.ts')).length, 1);
+});
+
+test('raw MPEG-TS channels keep raw-ts transport observability', async () => {
+  const bytes = concat(tsPacket(301, 0), tsPacket(301, 1));
+  const relay = createIptvRelay(env, {
+    fetchFn: async () => new Response(bytes, {
+      status: 200,
+      headers: { 'content-type': 'video/mp2t' },
+    }),
+  });
+
+  const response = await relay.handle({ method: 'GET', pathname: '/live/3974.ts' });
+  assert.equal(response.headers.get('x-kz-transport'), 'raw-ts');
+  await response.arrayBuffer();
+
+  const stats = relay.stats().streams['3974'];
+  assert.equal(stats.transportMode, 'raw-ts');
+  assert.equal(stats.segmentFetches, 0);
+  assert.equal(stats.playlistFetches, 0);
+  assert.ok(Number.isFinite(stats.firstMediaByteMs));
+});
