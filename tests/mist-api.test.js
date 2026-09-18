@@ -180,3 +180,13 @@ test('Mist API never creates an account unless bootstrapAccount is explicitly en
   assert.equal(calls.length, 1);
   assert.equal(JSON.stringify(calls).includes('new_password'), false);
 });
+
+
+test('Mist API nukeStream performs a targeted hard reset without deleting configuration', async () => {
+  const transport = createFetchRecorder({});
+  const mist = createMistApi({ fetchFn: transport.fetchFn });
+
+  await mist.nukeStream('test-ts');
+
+  assert.deepEqual(commandFrom(transport.calls[0]), { nuke_stream: 'test-ts' });
+});
