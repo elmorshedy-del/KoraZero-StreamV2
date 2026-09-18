@@ -49,8 +49,28 @@ async function clickAndVerify(streamId) {
   const name = (await row.locator('strong').textContent())?.trim() || null;
   const startedAt = Date.now();
 
+  const beforeClick = await snapshot();
   await row.click();
   log('WEBKIT_CLICKED', { streamId, name });
+
+  const transitionSamples = [];
+  if (beforeClick.channelId && beforeClick.channelId !== '—') {
+    const transitionDeadline = Date.now() + 15000;
+    while (Date.now() < transitionDeadline) {
+      const sample = await snapshot();
+      transitionSamples.push({
+        state: sample.state,
+        channelId: sample.channelId,
+        paused: sample.paused,
+        currentTime: sample.currentTime,
+      });
+      if (sample.channelId === 'iptv-' + streamId) break;
+      if (sample.state === 'STOPPED' || sample.state === 'IDLE' || sample.paused) {
+        throw new Error('player stopped or paused during channel transition: ' + JSON.stringify(sample));
+      }
+      await page.waitForTimeout(250);
+    }
+  }
 
   await page.waitForFunction((id) => {
     const video = document.querySelector('#live-video');
@@ -76,6 +96,8 @@ async function clickAndVerify(streamId) {
     streamId,
     name,
     clickToPlayingMs: Date.now() - startedAt - 2500,
+    beforeClick,
+    transitionSamples,
     first,
     second,
     advancedBy: second.currentTime - first.currentTime,
