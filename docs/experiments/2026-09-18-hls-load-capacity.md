@@ -1378,3 +1378,98 @@ To validate two-channel V2 serving independently of this constraint, the source 
 The small two-channel experiment correctly stopped escalation.
 
 The system should **not** proceed to 50+50 or 100+100 using this one-connection provider account, because the source constraint is already binding at 5+5. Single-channel fan-out remains the valid configuration for subsequent viewer-session/token testing.
+
+
+---
+
+## Follow-up: can one provider connection contain multiple channels?
+
+A second investigation was performed after the dual-channel test to determine whether the one-connection provider line could still carry several independently decodable programs inside one MPEG-TS connection.
+
+### Hypothesis
+
+If the provider returns an **MPTS** (multi-program transport stream), then one authorized upstream connection could contain several programs. KoraZero could ingest that single connection, parse PAT/PMT tables, split the programs locally, and expose each as an independent Mist channel while the provider still sees one upstream stream session.
+
+If the provider returns **SPTS** (single-program transport stream), the connection contains only one program and there are no bytes for the other channels to demultiplex.
+
+### Passive PAT instrumentation
+
+TDD commits:
+
+- `94b0f0b2836b3a29feba2baaedacd0760617f312` — RED tests for passive SPTS/MPTS detection
+- `2287fbc065d96ccf3d8d66eb50fbad1bf490bcdb` — PAT parser implementation
+
+The relay now reads PAT packets from the bytes it is already receiving and exposes:
+
+- MPEG-TS program number
+- PMT PID
+- program count
+- `spts` vs `mpts`
+
+No additional provider request is required.
+
+Verification:
+
+- **114 tests passed**
+- **0 failed**
+
+### Live result: provider stream 3974
+
+The first live PAT observed for stream `3974` was:
+
+```json
+{
+  "transportPrograms": [
+    {
+      "programNumber": 1,
+      "pmtPid": 4096
+    }
+  ],
+  "transportProgramCount": 1,
+  "transportKind": "spts"
+}
+```
+
+Therefore provider stream `3974` is **SPTS**: one MPEG-TS program only.
+
+This is stronger evidence than the account's `maxConnections=1` metadata. Even if KoraZero keeps that one upstream connection perfectly stable, it cannot demultiplex additional independent channels from stream 3974 because those programs are not present in the transport stream.
+
+### Provider-interface research
+
+The current provider catalogue was searched for aggregate-feed naming patterns:
+
+- `MPTS`: no matches
+- `mux`: no matches
+- `bouquet`: no matches
+- `multi`: one ordinary Brazilian channel named `Multishow`, not a multiplex
+
+Standard Xtream-style `get.php` / M3U bouquet output is a playlist of separate per-channel URLs, not a single multi-program MPEG-TS feed. The documented live URL shape remains one `stream_id` per media request.
+
+Technical references for Xtream-style panels also show active live sessions tracked with a `stream_id` in the current-activity table. Thus combining multiple logical channel requests behind one local HTTP/TCP proxy does not turn multiple stream sessions into one provider stream.
+
+### Engineering consequence
+
+The successful single-channel fan-out architecture remains:
+
+```text
+one provider program
+→ one provider session
+→ one KoraZero relay input
+→ Mist
+→ many viewers
+```
+
+The architecture required to carry several independent channels through one provider session would instead be:
+
+```text
+one provider MPTS / aggregate source
+→ one provider session
+→ PAT/PMT demux
+→ channel A / channel B / channel C
+→ Mist
+→ many viewers per channel
+```
+
+The current tested stream is not such a source.
+
+This does **not** mean KoraZero cannot serve multiple channels efficiently. It means the efficiency boundary is currently one upstream provider program per independently sourced channel, with unlimited local fan-out after acquisition. To reduce provider-side source sessions below the number of simultaneous distinct channels, the upstream must expose an authorized aggregate/MPTS/restream source containing those channels.
