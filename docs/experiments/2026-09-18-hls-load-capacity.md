@@ -748,3 +748,386 @@ The stress harness intentionally uses multiple independent load-generator servic
 The continuous canary and independent monitor are deliberately separate from the load shards.
 
 No IPTV credentials, provider authorization tokens, MistServer credentials, or signed source URLs are recorded in this document.
+
+
+---
+
+# Phase 2 — Viewer-session identity A/B
+
+## 15. Corrective change
+
+### Rationale
+
+Phase 1 failed at 100 viewers while:
+
+- the provider remained on one successful upstream connection;
+- relay input continued;
+- Mist CPU and memory were below limits; and
+- Mist emitted `Could not open session semaphore; aborting!`.
+
+Source inspection showed the default Mist viewer-session mode was 14:
+
+```text
+14 decimal = 0b1110 = stream + viewer IP + client token
+```
+
+Railway's public edge forwards requests to Mist through internal proxy hops, and Mist logged that those proxy addresses were not trusted. The A/B intervention therefore removed viewer IP from Mist's session-key material while preserving stream name and client token:
+
+```text
+10 decimal = 0b1010 = stream + client token
+```
+
+No changes were made to:
+
+- provider selection;
+- relay single-pull enforcement;
+- MPEG-TS ingest;
+- HLS format;
+- source recovery behavior;
+- input/output session modes;
+- Mist CPU/memory limits.
+
+### TDD implementation record
+
+1. RED — `815585df44ef8c9f04caa21ec807b5a09496d64a`  
+   `test: require stable Mist viewer session identity`
+
+   Result: **107 pass / 2 fail**, both because `ensureViewerSessionMode` did not yet exist.
+
+2. GREEN — `555aa17b430e5a32e1979810df6bb80ebffc4e74`  
+   `feat: support stable Mist viewer session mode`
+
+   Added an idempotent Mist API operation which:
+   - reads `config_backup`;
+   - compares current `sessionViewerMode`;
+   - sends only `{ config: { sessionViewerMode: 10 } }` when needed.
+
+   Result: **109 pass / 0 fail**.
+
+3. RED — `277198535374d3e64ec1c81f5c18f53bbbba0783`  
+   `test: require stable viewer mode at bootstrap`
+
+   The new bootstrap test failed as expected because startup had not yet applied the mode.
+
+4. GREEN implementation — `ea2a24c1fe1001a422db63d7d75de3a1b7de984c`  
+   `fix: stabilize Mist viewer identity behind proxy`
+
+5. Test-fixture/order update — `66d9255df107d7e6957378aa9b17806723ee384c`  
+   `test: account for viewer session bootstrap`
+
+   Final verification: **110 pass / 0 fail**.
+
+Bootstrap now enforces viewer mode 10 before channel registration.
+
+---
+
+## 16. Phase 2 pre-run baseline
+
+Fresh canary deployment:
+
+`9efcc626-e10b-4462-9e8d-4ea826196905`
+
+Fresh monitor deployment:
+
+`aa00cc5f-d8b8-49e5-8257-9da9118f79b9`
+
+Fresh relay deployment:
+
+`9bf697a3-106f-471f-8871-f8e79953bf14`
+
+Before starting the 100-viewer load:
+
+- `activePulls = 1`
+- `providerAttempts = 3`
+- `successfulProviderOpens = 1`
+- `failedProviderOpens = 2`
+- `rejectedConcurrentPulls = 0`
+- canary segment failures = 0
+- canary playlist failures = 0
+- monitor playlist errors = 0
+- monitor relay errors = 0
+
+The two failed provider attempts were cold-start attempts preceding the one successful provider connection and were fixed at baseline.
+
+---
+
+## 17. Phase 2 100-viewer replay protocol
+
+The Phase 1 100-viewer test was repeated without changing the load shape:
+
+- total viewers: **100**
+- shards: **4**
+- viewers per shard: **25**
+- per-viewer duration: **60,000 ms**
+- join mode: **steady**
+- join spread: **15,000 ms**
+- start delay: **3,000 ms**
+
+Run IDs:
+
+- `r100p2-a`
+- `r100p2-b`
+- `r100p2-c`
+- `r100p2-d`
+
+Load begins:
+
+- A: 2026-09-18 14:40:38 UTC
+- B: 2026-09-18 14:40:40 UTC
+- C: 2026-09-18 14:40:43 UTC
+- D: 2026-09-18 14:40:45 UTC
+
+Load summaries:
+
+- A: 14:41:57 UTC
+- B: 14:42:00 UTC
+- C: 14:42:03 UTC
+- D: 14:42:05 UTC
+
+---
+
+## 18. Phase 2 raw results
+
+### Shard A — `r100p2-a`
+
+| Metric | Result |
+|---|---:|
+| viewers | 25 |
+| harness good | 25 |
+| good % | 100% |
+| root failures | 0 |
+| playlist successes | 960 |
+| playlist failures | 0 |
+| segment successes | 1,346 |
+| segment failures | 0 |
+| bytes | 570,393,128 |
+| p50 first segment | 60 ms |
+| p95 first segment | 98 ms |
+| p95 maximum gap | 6,510 ms |
+| maximum gap | 6,544 ms |
+| p95 playlist request | 157 ms |
+| p95 segment request | 5,683 ms |
+| maximum final last-segment age | 5,465 ms |
+
+### Shard B — `r100p2-b`
+
+| Metric | Result |
+|---|---:|
+| viewers | 25 |
+| harness good | 25 |
+| good % | 100% |
+| root failures | 0 |
+| playlist successes | 946 |
+| playlist failures | 0 |
+| segment successes | 1,337 |
+| segment failures | 0 |
+| bytes | 566,664,148 |
+| p50 first segment | 61 ms |
+| p95 first segment | 151 ms |
+| p95 maximum gap | 6,426 ms |
+| maximum gap | 6,465 ms |
+| p95 playlist request | 111 ms |
+| p95 segment request | 5,637 ms |
+| maximum final last-segment age | 5,464 ms |
+
+### Shard C — `r100p2-c`
+
+| Metric | Result |
+|---|---:|
+| viewers | 25 |
+| harness good | 25 |
+| good % | 100% |
+| root failures | 0 |
+| playlist successes | 929 |
+| playlist failures | 0 |
+| segment successes | 1,325 |
+| segment failures | 0 |
+| bytes | 561,718,244 |
+| p50 first segment | 112 ms |
+| p95 first segment | 233 ms |
+| p95 maximum gap | 6,515 ms |
+| maximum gap | 6,708 ms |
+| p95 playlist request | 318 ms |
+| p95 segment request | 5,773 ms |
+| maximum final last-segment age | 6,382 ms |
+
+### Shard D — `r100p2-d`
+
+| Metric | Result |
+|---|---:|
+| viewers | 25 |
+| harness good | 24 |
+| good % | 96% |
+| root failures | 0 |
+| playlist successes | 900 |
+| playlist failures | 0 |
+| segment successes | 1,314 |
+| segment failures | 0 |
+| bytes | 557,139,880 |
+| p50 first segment | 169 ms |
+| p95 first segment | 343 ms |
+| p95 maximum gap | 6,627 ms |
+| maximum gap | 6,939 ms |
+| p95 playlist request | 262 ms |
+| p95 segment request | 5,613 ms |
+| maximum final last-segment age | 8,357 ms |
+
+The single viewer not classified as `good` in shard D failed only the harness's strict final-age criterion of <8,000 ms. There were **zero playlist failures and zero segment failures** in that shard, and its maximum measured inter-segment gap was 6.939 s. It is therefore not interpreted as a playback failure.
+
+### Combined Phase 2 100-viewer result
+
+- synthetic viewers: **100**
+- harness good: **99 / 100**
+- segment successes: **5,322**
+- segment failures: **0**
+- playlist successes: **3,735**
+- playlist failures: **0**
+- root failures: **0**
+- bytes delivered: **2,255,915,400**
+
+Observed request failure rates:
+
+- segment failure rate: **0 / 5,322 = 0%**
+- playlist failure rate: **0 / 3,735 = 0%**
+
+---
+
+## 19. Independent Phase 2 controls
+
+### Provider invariant
+
+Before, during, and after the run:
+
+- `activePulls = 1`
+- `providerAttempts = 3`
+- `successfulProviderOpens = 1`
+- `failedProviderOpens = 2`
+- `rejectedConcurrentPulls = 0`
+
+Therefore the 100-viewer test caused:
+
+- **0 additional successful provider opens**
+- **0 additional failed provider attempts**
+- **0 duplicate provider pulls**
+
+### Canary
+
+The independent canary accumulated no request failures throughout the Phase 2 run:
+
+- segment failures: **0**
+- playlist failures: **0**
+- root failures: **0**
+
+Its maximum recorded inter-segment gap eventually reached **8,453 ms**. This was transient; segment delivery continued without an HTTP failure and did not develop into the multi-tens-of-seconds failure pattern seen in Phase 1.
+
+### Independent monitor
+
+Throughout and after the load:
+
+- playlist errors: **0**
+- relay errors: **0**
+- `activePulls = 1`
+- `successfulProviderOpens = 1`
+
+The largest sampled playlist-advance age during the end of the run reached approximately **8,143 ms** before the next segment appeared. No playlist request failed.
+
+### MistServer failure log
+
+For the complete Phase 2 load window, filtered MistServer logs contained:
+
+- **0** `Could not open session semaphore` events
+- **0** FAIL-level events
+
+This directly contrasts with Phase 1, where semaphore failures occurred during the 100-viewer degradation.
+
+### Resource observation
+
+The post-run Railway one-hour rolling metric window reported:
+
+- CPU limit: 8
+- maximum CPU value in that rolling window: approximately 1.673
+- memory limit: 8 GB
+- maximum memory value in that rolling window: approximately 0.626 GB
+
+Because the one-hour window contains both Phase 1 and Phase 2 activity, these maxima are not treated as pure Phase 2 maxima. They nevertheless show no CPU or memory limit exhaustion during the experiment.
+
+---
+
+## 20. Phase 1 versus Phase 2 A/B comparison
+
+| Metric | Phase 1: mode 14 | Phase 2: mode 10 |
+|---|---:|---:|
+| viewers | 100 | 100 |
+| provider successful opens during baseline/run | 1 | 1 |
+| additional provider opens caused by load | 0 | 0 |
+| segment successes | 4,716 | 5,322 |
+| segment failures | 215 | **0** |
+| segment failure rate | 4.36% | **0%** |
+| playlist successes | 3,795 | 3,735 |
+| playlist failures | 306 | **0** |
+| playlist failure rate | 7.46% | **0%** |
+| worst load-shard gap | 37.803 s | **6.939 s** |
+| Mist semaphore failures | observed | **0 observed** |
+| canary request failures | observed | **0 observed** |
+
+The only intended serving-path intervention between the two 100-viewer experiments was the viewer-session identity mode.
+
+---
+
+## 21. Phase 2 inference
+
+The Phase 2 intervention **eliminated the reproducible Phase 1 100-viewer failure under the same four-shard load shape**.
+
+The observations are consistent with the hypothesis that inclusion of reverse-proxy-hop IP in Mist viewer-session identity was causing harmful session churn or fragmentation under Railway's proxy topology.
+
+The evidence supports the narrower causal statement:
+
+> Removing proxy-hop IP from Mist viewer-session identity was sufficient to change the same 100-viewer experiment from a high-error/semaphore-failure state to a zero-request-failure state.
+
+The experiment does **not** establish that session identity is now perfectly one-viewer-to-one-Mist-session.
+
+---
+
+## 22. Secondary session-coalescence observation
+
+After Phase 2, Mist access logs were inspected using the unique synthetic viewer User-Agent labels.
+
+Many sessions contained a single synthetic viewer label, but some sessions still accumulated multiple labels. Examples included sessions containing two, three, or more distinct `KZ-Load/r100p2-*/N` tags.
+
+Therefore:
+
+- the mode-10 intervention solved the observed serving failure;
+- it did not guarantee a unique Mist statistical session for every synthetic viewer;
+- Mist's automatic client-token generation/propagation remains a possible source of session coalescence in this synthetic environment.
+
+This is important because the load test generated **100 independent HTTP/HLS consumers**, but Mist's internal session accounting did not always represent those consumers one-for-one.
+
+### Consequence
+
+A further hardening/validation experiment is warranted:
+
+1. assign each real browser a stable, random, non-secret viewer token explicitly;
+2. append that token as Mist's `tkn` parameter to the root HLS manifest;
+3. keep the token stable across player recovery within the page session;
+4. make each synthetic load viewer send a distinct explicit token;
+5. repeat the 100-viewer experiment;
+6. verify both serving health **and** improved viewer/session identity separation.
+
+This next experiment is intended to validate 100 distinct viewer identities, not merely 100 independent HLS request loops.
+
+---
+
+## 23. Phase 2 conclusion
+
+**The original 100-viewer serving failure is fixed under the replicated load protocol.**
+
+At 100 concurrent synthetic HLS consumers after the mode-10 correction:
+
+- provider fan-out remained one upstream connection;
+- 5,322 segment requests succeeded with 0 failures;
+- 3,735 playlist requests succeeded with 0 failures;
+- no Mist semaphore failure occurred;
+- the canary remained error-free;
+- worst load-shard continuity remained below 7 seconds.
+
+Because internal Mist session coalescence was still observed, Phase 2 is considered a successful serving-capacity fix but not the final viewer-identity validation.
