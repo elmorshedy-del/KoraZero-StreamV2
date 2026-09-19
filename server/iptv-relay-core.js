@@ -265,22 +265,6 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
     };
   }
 
-  async function waitForProviderSlotFree(signal, timeoutMs = 15_000) {
-    const startedAt = Date.now();
-    while (true) {
-      if (signal?.aborted) {
-        const error = new Error('Provider slot wait aborted');
-        error.name = 'AbortError';
-        throw error;
-      }
-      const status = await accountStatus();
-      if (status.activeConnections === 0) return { ...status, waitMs: Date.now() - startedAt };
-      if (Date.now() - startedAt >= timeoutMs) {
-        throw new Error(`Provider slot did not clear within ${timeoutMs}ms (active=${status.activeConnections}, max=${status.maxConnections})`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-  }
 
   async function isAllowedStreamId(streamId) {
     if (allowedStreamIds.has(streamId)) return true;
@@ -424,7 +408,6 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
           initialResponse: upstream,
           initialUrl: upstream.url || target,
           fetchFn,
-          waitForFree: () => waitForProviderSlotFree(controller.signal),
           signal: controller.signal,
           userAgent: VLC_USER_AGENT,
           onPlaylist(meta) {

@@ -532,3 +532,95 @@ test('raw MPEG-TS channels keep raw-ts transport observability', async () => {
   assert.equal(stats.playlistFetches, 0);
   assert.ok(Number.isFinite(stats.firstMediaByteMs));
 });
+
+
+test('HLS-backed relay keeps fetching media while provider account would still report its own 1/1 session', async () => {
+  const firstSegment = concat(tsPacket(350, 0), tsPacket(350, 1));
+  const secondSegment = concat(tsPacket(351, 0), tsPacket(351, 1));
+  let mediaPlaylistReads = 0;
+  let accountReads = 0;
+
+  const initialPlaylist = [
+    '#EXTM3U',
+    '#EXT-X-TARGETDURATION:1',
+    '#EXT-X-MEDIA-SEQUENCE:10',
+    '#EXTINF:1.0,',
+    'segment-10.ts',
+    '',
+  ].join('\n');
+
+  const refreshedPlaylist = [
+    '#EXTM3U',
+    '#EXT-X-TARGETDURATION:1',
+    '#EXT-X-MEDIA-SEQUENCE:11',
+    '#EXTINF:1.0,',
+    'segment-11.ts',
+    '#EXT-X-ENDLIST',
+    '',
+  ].join('\n');
+
+  const relay = createIptvRelay(env, {
+    idleKeepaliveMs: 5_000,
+    fetchFn: async (url, options = {}) => {
+      const value = String(url);
+
+      if (value.includes('/player_api.php')) {
+        accountReads += 1;
+        return new Response(JSON.stringify({
+          user_info: {
+            auth: 1,
+            status: 'Active',
+            active_cons: '1',
+            max_connections: '1',
+            allowed_output_formats: ['m3u8', 'ts'],
+          },
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+
+      if (value.endsWith('/3974.ts') && options.headers?.Range === 'bytes=0-') {
+        return new Response(initialPlaylist, {
+          status: 206,
+          headers: { 'content-type': 'application/vnd.apple.mpegurl' },
+        });
+      }
+
+      if (value.endsWith('/segment-10.ts')) {
+        return new Response(firstSegment, {
+          status: 200,
+          headers: { 'content-type': 'video/mp2t' },
+        });
+      }
+
+      if (value.endsWith('/segment-11.ts')) {
+        return new Response(secondSegment, {
+          status: 200,
+          headers: { 'content-type': 'video/mp2t' },
+        });
+      }
+
+      if (value.endsWith('/3974.ts')) {
+        mediaPlaylistReads += 1;
+        return new Response(refreshedPlaylist, {
+          status: 200,
+          headers: { 'content-type': 'application/vnd.apple.mpegurl' },
+        });
+      }
+
+      throw new Error(`unexpected URL: ${value}`);
+    },
+  });
+
+  const response = await relay.handle({ method: 'GET', pathname: '/live/3974.ts' });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-kz-transport'), 'hls-to-ts');
+
+  const output = new Uint8Array(await response.arrayBuffer());
+  assert.deepEqual(output, concat(firstSegment, secondSegment));
+
+  const stats = relay.stats().streams['3974'];
+  assert.equal(stats.segmentFetches, 2);
+  assert.equal(stats.segmentBytes, firstSegment.length + secondSegment.length);
+  assert.equal(stats.lastError, null);
+  assert.equal(accountReads, 0);
+  assert.equal(mediaPlaylistReads, 1);
+});
