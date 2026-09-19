@@ -218,3 +218,63 @@ test('app bootstrap enforces stable Mist viewer sessions before registering chan
   assert.notEqual(streamIndex, -1, 'bootstrap must still register configured streams');
   assert.ok(modeIndex < streamIndex, 'viewer session identity must be configured before viewer channels are registered');
 });
+
+
+test('app bootstrap keeps only explicitly flagged channels always on', async () => {
+  const commands = [];
+  const fetchFn = async (_url, options) => {
+    const command = JSON.parse(new URLSearchParams(options.body).get('command'));
+    commands.push(command);
+    if (command.config_backup) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            config_backup: {
+              protocols: [{ connector: 'HTTP', port: 8080 }, { connector: 'HLS' }],
+              config: { sessionViewerMode: 10 },
+            },
+          };
+        },
+      };
+    }
+    return { ok: true, status: 200, async json() { return {}; } };
+  };
+
+  const app = createApp({
+    V2_CHANNELS_JSON: JSON.stringify({
+      'iptv-3645': {
+        source: 'http://relay.internal/live/3645.ts',
+        alwaysOn: true,
+      },
+      'bein-2': {
+        source: 'http://relay.internal/live/2454.ts',
+      },
+    }),
+    V2_INTERNAL_TOKEN: 'secret',
+    V2_PUBLIC_HLS_BASE: 'https://media.example/hls',
+    V2_MIST_API_ENDPOINT: 'http://mist.internal:4242/api2',
+  }, { fetchFn });
+
+  await app.bootstrap();
+
+  const addCommands = commands.filter((command) => command.addstream);
+  assert.deepEqual(addCommands, [
+    {
+      addstream: {
+        'iptv-3645': {
+          source: 'http://relay.internal/live/3645.ts',
+          always_on: true,
+        },
+      },
+    },
+    {
+      addstream: {
+        'bein-2': {
+          source: 'http://relay.internal/live/2454.ts',
+        },
+      },
+    },
+  ]);
+});
