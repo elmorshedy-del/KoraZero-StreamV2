@@ -10,6 +10,7 @@ test('channel registry returns server-only source for a known logical channel', 
   assert.deepEqual(registry.get('bein-1'), {
     channelId: 'bein-1',
     source: 'https://provider.invalid/live/source.ts',
+    alwaysOn: false,
   });
   assert.equal(registry.has('bein-1'), true);
 });
@@ -41,7 +42,18 @@ test('channel registry exposes a server-only snapshot for startup registration',
   });
 
   assert.deepEqual(registry.entries(), [
-    { channelId: 'bein-1', source: 'https://provider.invalid/one.ts' },
-    { channelId: 'bein-2', source: 'https://provider.invalid/two.ts' },
+    { channelId: 'bein-1', source: 'https://provider.invalid/one.ts', alwaysOn: false },
+    { channelId: 'bein-2', source: 'https://provider.invalid/two.ts', alwaysOn: false },
   ]);
+});
+
+
+test('channel registry preserves explicit always-on intent without making it the default', () => {
+  const registry = createChannelRegistry({
+    'iptv-3645': { source: 'http://relay.internal/live/3645.ts', alwaysOn: true },
+    'bein-2': { source: 'http://relay.internal/live/2454.ts' },
+  });
+
+  assert.equal(registry.get('iptv-3645').alwaysOn, true);
+  assert.equal(registry.get('bein-2').alwaysOn, false);
 });

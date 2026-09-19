@@ -11,7 +11,8 @@ export function createChannelRegistry(entries = {}) {
     if (!source) {
       throw new Error(`Channel ${channelId} requires a non-empty source`);
     }
-    channels.set(channelId, Object.freeze({ channelId, source }));
+    const alwaysOn = config?.alwaysOn === true;
+    channels.set(channelId, Object.freeze({ channelId, source, alwaysOn }));
   }
 
   return Object.freeze({
