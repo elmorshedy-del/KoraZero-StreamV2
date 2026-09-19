@@ -17,7 +17,11 @@ export function createApp(env = process.env, { fetchFn = globalThis.fetch, stati
     // 10 = stream + client token. Exclude reverse-proxy hop IP from viewer identity.
     const viewerSessionMode = await runtime.mist.ensureViewerSessionMode({ mode: 10 });
     for (const entry of runtime.registry.entries()) {
-      await runtime.mist.addStream(entry.channelId, entry.source);
+      await runtime.mist.addStream(
+        entry.channelId,
+        entry.source,
+        entry.alwaysOn ? { always_on: true } : {},
+      );
     }
     if (activateChannel) await runtime.gateway.activate(activateChannel);
     return {
