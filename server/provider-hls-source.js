@@ -55,7 +55,6 @@ export async function createProviderHlsTsStream({
   initialResponse,
   initialUrl,
   fetchFn = globalThis.fetch,
-  waitForFree = async () => {},
   signal = null,
   userAgent = 'VLC/3.0.18 LibVLC/3.0.18',
   sleepFn = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -80,8 +79,6 @@ export async function createProviderHlsTsStream({
   });
 
   async function fetchPlaylist(url) {
-    assertNotAborted(signal);
-    await waitForFree();
     assertNotAborted(signal);
     const response = await fetchFn(url, {
       method: 'GET',
@@ -143,8 +140,6 @@ export async function createProviderHlsTsStream({
           seen.delete(oldest);
         }
 
-        await waitForFree();
-        assertNotAborted(signal);
         const startedAt = Date.now();
         const response = await fetchFn(segmentUrl, {
           method: 'GET',
