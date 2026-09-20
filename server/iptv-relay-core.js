@@ -161,6 +161,7 @@ function createStreamStats() {
     lastSegmentContentType: null,
     lastError: null,
     lastMediaAt: null,
+    audioDelayMs: 0,
   };
 }
 
@@ -173,6 +174,142 @@ function parseNonNegativeInt(value, fallback = 0) {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+const PTS_WRAP = 1n << 33n;
+const AUDIO_STREAM_TYPES = new Set([0x03, 0x04, 0x0f, 0x11, 0x81]);
+
+function parseAudioDelayByStream(raw) {
+  const text = typeof raw === 'string' ? raw.trim() : '';
+  if (!text) return new Map();
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('V2_IPTV_AUDIO_DELAY_MS_BY_STREAM must be a JSON object');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('V2_IPTV_AUDIO_DELAY_MS_BY_STREAM must be a JSON object');
+  }
+  const result = new Map();
+  for (const [streamId, value] of Object.entries(parsed)) {
+    if (!/^\d+$/.test(streamId)) throw new Error('Audio-delay stream ids must be numeric');
+    const ms = Number(value);
+    if (!Number.isFinite(ms) || Math.abs(ms) > 2_000) {
+      throw new Error('Audio delay must be between -2000 and 2000 ms');
+    }
+    result.set(streamId, ms);
+  }
+  return result;
+}
+
+function readPts(bytes, offset) {
+  if (offset + 5 > bytes.length) return null;
+  return (
+    (BigInt((bytes[offset] >> 1) & 0x07) << 30n)
+    | (BigInt(bytes[offset + 1]) << 22n)
+    | (BigInt((bytes[offset + 2] >> 1) & 0x7f) << 15n)
+    | (BigInt(bytes[offset + 3]) << 7n)
+    | BigInt((bytes[offset + 4] >> 1) & 0x7f)
+  );
+}
+
+function writePts(bytes, offset, value) {
+  const normalized = ((value % PTS_WRAP) + PTS_WRAP) % PTS_WRAP;
+  const prefix = bytes[offset] & 0xf0;
+  bytes[offset] = prefix | (Number((normalized >> 30n) & 0x07n) << 1) | 1;
+  bytes[offset + 1] = Number((normalized >> 22n) & 0xffn);
+  bytes[offset + 2] = (Number((normalized >> 15n) & 0x7fn) << 1) | 1;
+  bytes[offset + 3] = Number((normalized >> 7n) & 0xffn);
+  bytes[offset + 4] = (Number(normalized & 0x7fn) << 1) | 1;
+}
+
+function createAudioTimestampDelay(delayMs) {
+  const delayTicks = BigInt(Math.round(Number(delayMs || 0) * 90));
+  const pmtPids = new Set();
+  const audioPids = new Set();
+
+  function payloadOffset(bytes, packetOffset) {
+    const adaptationControl = (bytes[packetOffset + 3] >> 4) & 0x03;
+    if (adaptationControl === 0 || adaptationControl === 2) return null;
+    let payload = packetOffset + 4;
+    if (adaptationControl === 3) {
+      payload += 1 + bytes[packetOffset + 4];
+      if (payload >= packetOffset + TS_PACKET_BYTES) return null;
+    }
+    return payload;
+  }
+
+  function learnPids(bytes) {
+    for (let offset = 0; offset + TS_PACKET_BYTES <= bytes.length; offset += TS_PACKET_BYTES) {
+      if (bytes[offset] !== 0x47) continue;
+      const payloadUnitStart = Boolean(bytes[offset + 1] & 0x40);
+      if (!payloadUnitStart) continue;
+      const pid = ((bytes[offset + 1] & 0x1f) << 8) | bytes[offset + 2];
+      const payload = payloadOffset(bytes, offset);
+      if (payload === null) continue;
+
+      if (pid === 0) {
+        const pointer = bytes[payload];
+        const section = payload + 1 + pointer;
+        if (section + 8 > offset + TS_PACKET_BYTES || bytes[section] !== 0x00) continue;
+        const sectionLength = ((bytes[section + 1] & 0x0f) << 8) | bytes[section + 2];
+        const end = Math.min(offset + TS_PACKET_BYTES, section + 3 + sectionLength - 4);
+        for (let cursor = section + 8; cursor + 4 <= end; cursor += 4) {
+          const programNumber = (bytes[cursor] << 8) | bytes[cursor + 1];
+          if (!programNumber) continue;
+          pmtPids.add(((bytes[cursor + 2] & 0x1f) << 8) | bytes[cursor + 3]);
+        }
+        continue;
+      }
+
+      if (!pmtPids.has(pid)) continue;
+      const pointer = bytes[payload];
+      const section = payload + 1 + pointer;
+      if (section + 12 > offset + TS_PACKET_BYTES || bytes[section] !== 0x02) continue;
+      const sectionLength = ((bytes[section + 1] & 0x0f) << 8) | bytes[section + 2];
+      const programInfoLength = ((bytes[section + 10] & 0x0f) << 8) | bytes[section + 11];
+      const end = Math.min(offset + TS_PACKET_BYTES, section + 3 + sectionLength - 4);
+      for (let cursor = section + 12 + programInfoLength; cursor + 5 <= end;) {
+        const streamType = bytes[cursor];
+        const streamPid = ((bytes[cursor + 1] & 0x1f) << 8) | bytes[cursor + 2];
+        const esInfoLength = ((bytes[cursor + 3] & 0x0f) << 8) | bytes[cursor + 4];
+        if (AUDIO_STREAM_TYPES.has(streamType)) audioPids.add(streamPid);
+        cursor += 5 + esInfoLength;
+      }
+    }
+  }
+
+  return {
+    push(bytes) {
+      if (!bytes?.length || delayTicks === 0n) return bytes;
+      learnPids(bytes);
+      if (!audioPids.size) return bytes;
+
+      for (let offset = 0; offset + TS_PACKET_BYTES <= bytes.length; offset += TS_PACKET_BYTES) {
+        if (bytes[offset] !== 0x47 || !(bytes[offset + 1] & 0x40)) continue;
+        const pid = ((bytes[offset + 1] & 0x1f) << 8) | bytes[offset + 2];
+        if (!audioPids.has(pid)) continue;
+        const payload = payloadOffset(bytes, offset);
+        if (payload === null || payload + 14 >= offset + TS_PACKET_BYTES) continue;
+        if (bytes[payload] !== 0x00 || bytes[payload + 1] !== 0x00 || bytes[payload + 2] !== 0x01) continue;
+
+        const ptsDtsFlags = (bytes[payload + 7] >> 6) & 0x03;
+        if (ptsDtsFlags !== 0x02 && ptsDtsFlags !== 0x03) continue;
+
+        const ptsOffset = payload + 9;
+        const pts = readPts(bytes, ptsOffset);
+        if (pts !== null) writePts(bytes, ptsOffset, pts + delayTicks);
+
+        if (ptsDtsFlags === 0x03) {
+          const dtsOffset = payload + 14;
+          const dts = readPts(bytes, dtsOffset);
+          if (dts !== null) writePts(bytes, dtsOffset, dts + delayTicks);
+        }
+      }
+      return bytes;
+    },
+  };
+}
+
 export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch, log = () => {}, idleKeepaliveMs = DEFAULT_IDLE_KEEPALIVE_MS } = {}) {
   const portal = normalizePortal(required(env, 'V2_IPTV_PORTAL_URL'));
   const username = required(env, 'V2_IPTV_USERNAME');
@@ -180,6 +317,7 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
   const catalogMode = env.V2_IPTV_CATALOG_MODE === 'true';
   const catalogTtlMs = Math.max(5_000, parseNonNegativeInt(env.V2_IPTV_CATALOG_TTL_MS, DEFAULT_CATALOG_TTL_MS));
   const maxActivePulls = parseNonNegativeInt(env.V2_IPTV_MAX_ACTIVE_PULLS, 0);
+  const audioDelayByStream = parseAudioDelayByStream(env.V2_IPTV_AUDIO_DELAY_MS_BY_STREAM);
   const allowedRaw = typeof env.V2_IPTV_ALLOWED_STREAM_IDS === 'string' ? env.V2_IPTV_ALLOWED_STREAM_IDS.trim() : '';
   const fallbackRaw = typeof env.V2_IPTV_TEST_STREAM_ID === 'string' ? env.V2_IPTV_TEST_STREAM_ID.trim() : '';
   const staticIdsRaw = allowedRaw || fallbackRaw;
@@ -321,6 +459,8 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
     const requestedStreamId = match?.[1] || null;
     if (!requestedStreamId || !(await isAllowedStreamId(requestedStreamId))) return new Response('Not found', { status: 404 });
     const currentStreamStats = getStreamStats(requestedStreamId);
+    const audioDelayMs = audioDelayByStream.get(requestedStreamId) || 0;
+    currentStreamStats.audioDelayMs = audioDelayMs;
 
     if (method === 'HEAD') {
       return new Response(null, {
@@ -436,6 +576,7 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
 
       const reader = sourceBody.getReader();
       const framer = createTsFramer();
+      const audioTimestampDelay = createAudioTimestampDelay(audioDelayMs);
       let pendingRead = null;
 
       const getPendingRead = () => {
@@ -489,13 +630,14 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
               currentStreamStats.realBytes += receivedBytes;
               const framed = framer.push(value || new Uint8Array(0));
               if (framed.length) {
-                const transportPrograms = parsePatPrograms(framed);
+                const synchronized = audioTimestampDelay.push(framed);
+                const transportPrograms = parsePatPrograms(synchronized);
                 if (transportPrograms.length) {
                   currentStreamStats.transportPrograms = transportPrograms;
                   currentStreamStats.transportProgramCount = transportPrograms.length;
                   currentStreamStats.transportKind = transportPrograms.length > 1 ? 'mpts' : 'spts';
                 }
-                out.enqueue(framed);
+                out.enqueue(synchronized);
                 return;
               }
             }
