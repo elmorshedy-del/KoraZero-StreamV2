@@ -63,6 +63,17 @@ test('public playback descriptor returns only KoraZero HLS information', async (
   });
 });
 
+test('public numeric catalog playback cannot switch the provider source', async () => {
+  await withServer(async ({ base, gateway }) => {
+    const response = await fetch(`${base}/api/playback/89778`);
+    const body = await response.json();
+
+    assert.equal(response.status, 403);
+    assert.deepEqual(body, { error: 'dynamic_playback_requires_internal_activation' });
+    assert.deepEqual(gateway.calls, []);
+  });
+});
+
 test('unknown public playback channel returns 404', async () => {
   await withServer(async ({ base }) => {
     const response = await fetch(`${base}/api/playback/missing`);
