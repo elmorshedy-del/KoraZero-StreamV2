@@ -95,6 +95,14 @@ export function createControlServer({ gateway, internalToken, staticRoot = null 
 
       const publicChannel = channelFrom(pathname, '/api/playback/');
       if (req.method === 'GET' && publicChannel) {
+        // Numeric catalog IDs are an activation/switch operation, not a public
+        // descriptor lookup. Keeping them public let crawlers switch the single
+        // upstream provider slot and tear down the stream real viewers were
+        // watching. Dynamic activation belongs behind the authenticated
+        // /internal/channels/:id/activate route.
+        if (/^\\d+$/.test(publicChannel)) {
+          return sendJson(res, 403, { error: 'dynamic_playback_requires_internal_activation' });
+        }
         const requestAbort = createRequestAbort(req, res);
         try {
           const value = await gateway.playback(publicChannel, { signal: requestAbort.signal });
