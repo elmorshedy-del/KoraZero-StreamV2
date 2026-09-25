@@ -20,14 +20,12 @@ export function createApp(env = process.env, { fetchFn = globalThis.fetch, stati
     if (emergency3645Only) {
       const configured = await runtime.mist.listConfiguredStreams();
       for (const channelId of configured) {
-        if (channelId === 'bein-1' || channelId.startsWith('iptv-')) {
-          try { await runtime.mist.nukeStream(channelId); } catch {}
-          try { await runtime.mist.deleteStream(channelId); } catch {}
-        }
+        try { await runtime.mist.nukeStream(channelId); } catch {}
+        try { await runtime.mist.deleteStream(channelId); } catch {}
       }
     }
     for (const entry of runtime.registry.entries()) {
-      if (emergency3645Only && entry.channelId === 'bein-1') continue;
+      if (emergency3645Only) continue;
       await runtime.mist.addStream(
         entry.channelId,
         entry.source,
