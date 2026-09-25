@@ -19,7 +19,8 @@ if (fanout) {
   console.log(`V2 fanout smoke passed channel=${fanout.channelId} viewers=${fanout.viewers} upstreamPulls=${fanout.upstreamPulls} totalPulls=${fanout.totalPulls}`);
 }
 
-// Emergency: disable automatic source remount supervisor; Mist handles reconnects natively.
+// Emergency: keep automatic remount disabled; Mist handles reconnects natively.
+if (false) app.sourceSupervisor.start();
 
 const recovery = await runConfiguredRecoverySmokeTest(process.env);
 if (recovery) {
