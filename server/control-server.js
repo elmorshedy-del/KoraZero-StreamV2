@@ -100,7 +100,7 @@ export function createControlServer({ gateway, internalToken, staticRoot = null 
         // upstream provider slot and tear down the stream real viewers were
         // watching. Dynamic activation belongs behind the authenticated
         // /internal/channels/:id/activate route.
-        if (/^\\d+$/.test(publicChannel)) {
+        if (/^\d+$/.test(publicChannel)) {
           return sendJson(res, 403, { error: 'dynamic_playback_requires_internal_activation' });
         }
         const requestAbort = createRequestAbort(req, res);
