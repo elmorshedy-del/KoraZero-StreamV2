@@ -16,7 +16,18 @@ export function createApp(env = process.env, { fetchFn = globalThis.fetch, stati
     const hlsProtocol = await runtime.mist.ensureHlsProtocol();
     // 10 = stream + client token. Exclude reverse-proxy hop IP from viewer identity.
     const viewerSessionMode = await runtime.mist.ensureViewerSessionMode({ mode: 10 });
+    const emergency3645Only = env.V2_EMERGENCY_3645_ONLY === 'true';
+    if (emergency3645Only) {
+      const configured = await runtime.mist.listConfiguredStreams();
+      for (const channelId of configured) {
+        if (channelId === 'bein-1' || channelId.startsWith('iptv-')) {
+          try { await runtime.mist.nukeStream(channelId); } catch {}
+          try { await runtime.mist.deleteStream(channelId); } catch {}
+        }
+      }
+    }
     for (const entry of runtime.registry.entries()) {
+      if (emergency3645Only && entry.channelId === 'bein-1') continue;
       await runtime.mist.addStream(
         entry.channelId,
         entry.source,
