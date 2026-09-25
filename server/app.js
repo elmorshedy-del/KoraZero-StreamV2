@@ -23,6 +23,11 @@ export function createApp(env = process.env, { fetchFn = globalThis.fetch, stati
         try { await runtime.mist.nukeStream(channelId); } catch {}
         try { await runtime.mist.deleteStream(channelId); } catch {}
       }
+      await runtime.mist.addStream(
+        'iptv-3645',
+        'http://v2-iptv-relay.railway.internal:8080/live/3645.ts',
+        { always_on: true },
+      );
     }
     for (const entry of runtime.registry.entries()) {
       if (emergency3645Only) continue;
@@ -32,7 +37,7 @@ export function createApp(env = process.env, { fetchFn = globalThis.fetch, stati
         entry.alwaysOn ? { always_on: true } : {},
       );
     }
-    if (activateChannel) await runtime.gateway.activate(activateChannel);
+    if (activateChannel && !emergency3645Only) await runtime.gateway.activate(activateChannel);
     return {
       httpProtocol,
       hlsProtocol,
