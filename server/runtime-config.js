@@ -25,6 +25,7 @@ function parseChannels(raw) {
 export function createRuntime(env = process.env, { fetchFn = globalThis.fetch } = {}) {
   const channels = parseChannels(requireEnv(env, 'V2_CHANNELS_JSON'));
   const internalToken = requireEnv(env, 'V2_INTERNAL_TOKEN');
+  const operatorPin = String(env.V2_OPERATOR_PIN || '').trim() || null;
   const publicHlsBase = requireEnv(env, 'V2_PUBLIC_HLS_BASE');
   const mistEndpoint = (env.V2_MIST_API_ENDPOINT || 'http://127.0.0.1:4242/api2').trim();
   const mistUsername = (env.V2_MIST_USERNAME || '').trim();
@@ -69,6 +70,7 @@ export function createRuntime(env = process.env, { fetchFn = globalThis.fetch } 
   return Object.freeze({
     port,
     internalToken,
+    operatorPin,
     registry,
     mist,
     sourceSupervisor,
