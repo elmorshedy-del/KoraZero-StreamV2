@@ -196,3 +196,16 @@ test('operator remote page is served without embedding credentials', async () =>
     assert.equal(html.includes('V2_OPERATOR_PIN'), false);
   });
 });
+
+
+test('public active state is read-only and exposes no control credential', async () => {
+  await withServer(async ({ base, gateway }) => {
+    const response = await fetch(`${base}/api/active`);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.active.streamId, '3645');
+    assert.deepEqual(gateway.calls.slice(-1), [['active']]);
+    assert.equal(JSON.stringify(body).includes('operator-pin'), false);
+    assert.equal(JSON.stringify(body).includes('test-secret'), false);
+  });
+});
