@@ -191,7 +191,8 @@ test('operator remote page is served without embedding credentials', async () =>
     assert.equal(response.status, 200);
     assert.match(html, /V2 Remote/);
     assert.match(html, /operator PIN/i);
-    assert.equal(html.includes('operator-pin'), false);
+    assert.equal(html.includes('operator-pin'), true);
     assert.equal(html.includes('test-secret'), false);
+    assert.equal(html.includes('V2_OPERATOR_PIN'), false);
   });
 });
