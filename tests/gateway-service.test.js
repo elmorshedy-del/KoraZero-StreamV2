@@ -156,7 +156,10 @@ test('catalog playback switches one provider-backed Mist input at a time', async
   assert.deepEqual(events, ['slot-free', 'slot-free']);
   assert.deepEqual(mist.calls, [
     ['listConfiguredStreams'],
+    ['listConfiguredStreams'],
     ['addStream', 'iptv-2449', 'http://relay.internal:8080/live/2449.ts', { always_on: true }],
+    ['listConfiguredStreams'],
+    ['getStream', 'iptv-2449'],
     ['listConfiguredStreams'],
     ['nukeStream', 'iptv-2449'],
     ['deleteStream', 'iptv-2449'],
@@ -203,6 +206,9 @@ test('catalog playback cleans stale dynamic Mist streams without arming the stat
   assert.equal(result.channelId, 'iptv-333');
   assert.deepEqual(mist.calls, [
     ['listConfiguredStreams'],
+    ['getStream', 'iptv-111'],
+    ['getStream', 'iptv-222'],
+    ['listConfiguredStreams'],
     ['nukeStream', 'iptv-111'],
     ['deleteStream', 'iptv-111'],
     ['getStream', 'iptv-111'],
@@ -243,6 +249,7 @@ test('catalog playback fails closed, cleans Mist, and preserves a phase trace wh
   assert.ok(diagnostic.events.some((event) => event.phase === 'hls-verify-start'));
   assert.ok(diagnostic.events.some((event) => event.phase === 'failed'));
   assert.deepEqual(mist.calls, [
+    ['listConfiguredStreams'],
     ['listConfiguredStreams'],
     ['addStream', 'iptv-444', 'http://relay.internal:8080/live/444.ts', { always_on: true }],
     ['nukeStream', 'iptv-444'],
