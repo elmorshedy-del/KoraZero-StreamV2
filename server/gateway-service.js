@@ -113,6 +113,36 @@ export function createGatewayService({
     return { stopped: false, waitMs: Date.now() - startedAt, status: lastStatus };
   }
 
+  async function activeDynamicState() {
+    const configured = typeof mist.listConfiguredStreams === 'function'
+      ? await mist.listConfiguredStreams()
+      : [];
+    const dynamic = configured.filter((name) => name.startsWith('iptv-'));
+    const states = [];
+    for (const channelId of dynamic) {
+      const status = await mist.getStream(channelId);
+      states.push({
+        channelId,
+        streamId: channelId.slice(5),
+        active: Boolean(status.active),
+        inputs: Number(status.inputs || 0),
+        viewers: Number(status.viewers || 0),
+        outputs: Number(status.outputs || 0),
+        tracks: Number(status.tracks || 0),
+        status: status.status || (status.active ? 'active' : 'inactive'),
+        health: status.health ?? null,
+        manifestUrl: `${hlsBase}/${encodeURIComponent(channelId)}/index.m3u8`,
+      });
+    }
+    const live = states.filter((item) => item.active && item.inputs > 0);
+    return {
+      active: live.length === 1 ? live[0] : null,
+      conflict: live.length > 1,
+      live,
+      configured: states,
+    };
+  }
+
   async function cleanDynamicMistStreams(attempt) {
     const configured = typeof mist.listConfiguredStreams === 'function'
       ? await mist.listConfiguredStreams()
@@ -164,6 +194,18 @@ export function createGatewayService({
     throwIfAborted(signal);
     const entry = await catalogEntry(streamId, signal);
     const mistChannelId = `iptv-${streamId}`;
+    const existing = await activeDynamicState();
+    if (!existing.conflict && existing.active?.channelId === mistChannelId) {
+      activeCatalogChannel = { streamId, mistChannelId };
+      return descriptor(mistChannelId, {
+        streamId,
+        name: entry.name,
+        categoryId: entry.categoryId,
+        categoryName: entry.categoryName,
+        verified: true,
+        alreadyActive: true,
+      });
+    }
     const attempt = beginAttempt(streamId, entry.name);
     record(attempt, 'switch-generation', { generation });
 
@@ -302,6 +344,29 @@ export function createGatewayService({
 
     diagnostic(streamId) {
       return latestAttempts.get(String(streamId)) || null;
+    },
+
+    async active() {
+      const state = await activeDynamicState();
+      return {
+        active: state.active,
+        conflict: state.conflict,
+        live: state.live,
+      };
+    },
+
+    async stopDynamic() {
+      const configured = typeof mist.listConfiguredStreams === 'function'
+        ? await mist.listConfiguredStreams()
+        : [];
+      const dynamic = configured.filter((name) => name.startsWith('iptv-'));
+      for (const channelId of dynamic) {
+        try { await mist.nukeStream(channelId); } catch {}
+        try { await mist.deleteStream(channelId); } catch {}
+        try { await observeMistInputExit(channelId, 1_500); } catch {}
+      }
+      activeCatalogChannel = null;
+      return { stopped: true, channels: dynamic };
     },
 
     async playback(channelId, { signal = null } = {}) {

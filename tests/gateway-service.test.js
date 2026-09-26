@@ -390,3 +390,53 @@ test('newest catalog selection supersedes an older provider-slot wait', async ()
   const newDiagnostic = gateway.diagnostic('222');
   assert.equal(newDiagnostic.phase, 'verified');
 });
+
+
+test('catalog activation is idempotent when the requested V2 Mist input is already live', async () => {
+  const registry = createChannelRegistry({});
+  const mist = createMistFake();
+  mist.configured.add('iptv-3645');
+  const catalogClient = {
+    async list() {
+      return { categories: [], channels: [{ streamId: '3645', name: 'beIN Sports 1', categoryId: '1', categoryName: 'beIN' }] };
+    },
+    async waitForFreeSlot() {
+      throw new Error('should not wait for slot when already active');
+    },
+    async stats() { return { streams: {} }; },
+  };
+  const gateway = createGatewayService({
+    registry, mist, catalogClient,
+    publicHlsBase: 'https://stream-v2.example/hls',
+    relayBase: 'http://relay.internal:8080',
+    playbackProbeFn: async () => { throw new Error('should not probe when already active'); },
+  });
+
+  const result = await gateway.activate('3645');
+  assert.equal(result.channelId, 'iptv-3645');
+  assert.equal(result.alreadyActive, true);
+  assert.equal(mist.calls.some((call) => call[0] === 'nukeStream'), false);
+  assert.equal(mist.calls.some((call) => call[0] === 'deleteStream'), false);
+  assert.equal(mist.calls.some((call) => call[0] === 'addStream'), false);
+});
+
+test('operator active state and off are derived from Mist, not controller memory', async () => {
+  const registry = createChannelRegistry({});
+  const mist = createMistFake();
+  mist.configured.add('iptv-89778');
+  const gateway = createGatewayService({
+    registry, mist,
+    publicHlsBase: 'https://stream-v2.example/hls',
+  });
+
+  const before = await gateway.active();
+  assert.equal(before.conflict, false);
+  assert.equal(before.active.streamId, '89778');
+
+  const stopped = await gateway.stopDynamic();
+  assert.deepEqual(stopped.channels, ['iptv-89778']);
+  assert.equal(stopped.stopped, true);
+
+  const after = await gateway.active();
+  assert.equal(after.active, null);
+});

@@ -74,7 +74,16 @@ function createRequestAbort(req, res) {
   };
 }
 
-export function createControlServer({ gateway, internalToken, staticRoot = null }) {
+const OPERATOR_STREAM_IDS = new Set(['3645', '3644', '3653', '3652', '3651', '89778', '89779']);
+
+function operatorAuthorized(req, operatorPin) {
+  if (!operatorPin) return false;
+  const bearer = String(req.headers.authorization || '');
+  if (bearer === `Bearer ${operatorPin}`) return true;
+  return String(req.headers['x-operator-pin'] || '') === operatorPin;
+}
+
+export function createControlServer({ gateway, internalToken, operatorPin = null, staticRoot = null }) {
   if (!gateway) throw new Error('control server requires gateway');
   if (!internalToken) throw new Error('control server requires internalToken');
 
@@ -110,6 +119,28 @@ export function createControlServer({ gateway, internalToken, staticRoot = null 
           return sendJson(res, 200, value);
         } finally {
           requestAbort.cleanup();
+        }
+      }
+
+      if (pathname.startsWith('/operator/')) {
+        if (!operatorAuthorized(req, operatorPin)) {
+          return sendJson(res, 401, { error: 'unauthorized' });
+        }
+
+        if (req.method === 'GET' && pathname === '/operator/active') {
+          return sendJson(res, 200, await gateway.active());
+        }
+
+        if (req.method === 'POST' && pathname === '/operator/off') {
+          return sendJson(res, 200, await gateway.stopDynamic());
+        }
+
+        const streamId = channelFrom(pathname, '/operator/switch/');
+        if (req.method === 'POST' && streamId) {
+          if (!OPERATOR_STREAM_IDS.has(streamId)) {
+            return sendJson(res, 400, { error: 'stream_not_allowed' });
+          }
+          return sendJson(res, 200, await gateway.activate(streamId));
         }
       }
 
