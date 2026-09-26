@@ -34,12 +34,20 @@ function createGatewayFake() {
       calls.push(['stop', channelId]);
       return { channelId, stopped: true };
     },
+    async active() {
+      calls.push(['active']);
+      return { active: { channelId: 'iptv-3645', streamId: '3645', inputs: 1, viewers: 2 }, conflict: false, live: [] };
+    },
+    async stopDynamic() {
+      calls.push(['stopDynamic']);
+      return { stopped: true, channels: ['iptv-3645'] };
+    },
   };
 }
 
 async function withServer(fn) {
   const gateway = createGatewayFake();
-  const server = createControlServer({ gateway, internalToken: 'test-secret', staticRoot });
+  const server = createControlServer({ gateway, internalToken: 'test-secret', operatorPin: 'operator-pin', staticRoot });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address();
   try {
@@ -146,5 +154,44 @@ test('public catalog returns sanitized provider channel metadata', async () => {
     assert.deepEqual(gateway.calls, [['catalog']]);
     assert.equal(JSON.stringify(body).includes('username'), false);
     assert.equal(JSON.stringify(body).includes('password'), false);
+  });
+});
+
+
+test('operator routes require the operator PIN and only allow fixed V2 stream ids', async () => {
+  await withServer(async ({ base, gateway }) => {
+    let response = await fetch(`${base}/operator/active`);
+    assert.equal(response.status, 401);
+
+    const headers = { 'x-operator-pin': 'operator-pin' };
+    response = await fetch(`${base}/operator/active`, { headers });
+    assert.equal(response.status, 200);
+
+    response = await fetch(`${base}/operator/switch/3645`, { method: 'POST', headers });
+    assert.equal(response.status, 200);
+
+    response = await fetch(`${base}/operator/switch/99999`, { method: 'POST', headers });
+    assert.equal(response.status, 400);
+
+    response = await fetch(`${base}/operator/off`, { method: 'POST', headers });
+    assert.equal(response.status, 200);
+
+    assert.deepEqual(gateway.calls.slice(-3), [
+      ['active'],
+      ['activate', '3645'],
+      ['stopDynamic'],
+    ]);
+  });
+});
+
+test('operator remote page is served without embedding credentials', async () => {
+  await withServer(async ({ base }) => {
+    const response = await fetch(`${base}/remote.html`);
+    const html = await response.text();
+    assert.equal(response.status, 200);
+    assert.match(html, /V2 Remote/);
+    assert.match(html, /operator PIN/i);
+    assert.equal(html.includes('operator-pin'), false);
+    assert.equal(html.includes('test-secret'), false);
   });
 });
