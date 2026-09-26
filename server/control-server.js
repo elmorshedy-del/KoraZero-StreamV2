@@ -96,6 +96,10 @@ export function createControlServer({ gateway, internalToken, operatorPin = null
         return sendJson(res, 200, await gateway.catalog());
       }
 
+      if (req.method === 'GET' && pathname === '/api/active') {
+        return sendJson(res, 200, await gateway.active());
+      }
+
       const diagnosticChannel = channelFrom(pathname, '/api/diagnostics/');
       if (req.method === 'GET' && diagnosticChannel) {
         const diagnostic = gateway.diagnostic?.(diagnosticChannel) || null;
