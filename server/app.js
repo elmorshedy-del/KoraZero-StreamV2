@@ -9,6 +9,7 @@ export function createApp(env = process.env, { fetchFn = globalThis.fetch, stati
   const server = createControlServer({
     gateway: runtime.gateway,
     internalToken: runtime.internalToken,
+    operatorPin: runtime.operatorPin,
     staticRoot,
   });
   async function bootstrap({ activateChannel = null } = {}) {
