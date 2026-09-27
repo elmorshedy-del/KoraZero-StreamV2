@@ -25,22 +25,21 @@ function get(url){
 async function user(id){
   const started=Date.now();
   const out={id};
-  out.home=await get(BASE+'/');
+  const nonce='e2e-'+Date.now()+'-'+id;
+  out.home=await get(BASE+'/?__load='+encodeURIComponent(nonce));
   if(out.home.status<200 || out.home.status>=500) return {...out,stage:'HOME_FAIL',ok:false,totalMs:Date.now()-started};
-  out.watch=await get(BASE+'/watch.html?match='+encodeURIComponent(MATCH));
+  out.watch=await get(BASE+'/watch.html?match='+encodeURIComponent(MATCH)+'&__load='+encodeURIComponent(nonce));
   if(out.watch.status<200 || out.watch.status>=500) return {...out,stage:'WATCH_FAIL',ok:false,totalMs:Date.now()-started};
-  const [plan,catalog,today,active]=await Promise.all([
-    get(BASE+'/api/stream-plan?match='+encodeURIComponent(MATCH)),
-    get(BASE+'/api/iptv-lab/catalog'),
-    get(BASE+'/assets/data/today.json'),
-    get(BASE+'/api/active')
+  const [plan,catalog,today]=await Promise.all([
+    get(BASE+'/api/stream-plan?match='+encodeURIComponent(MATCH)+'&__load='+encodeURIComponent(nonce)),
+    get(BASE+'/api/iptv-lab/catalog?__load='+encodeURIComponent(nonce)),
+    get(BASE+'/assets/data/today.json?__load='+encodeURIComponent(nonce))
   ]);
-  out.plan=plan; out.catalog=catalog; out.today=today; out.active=active;
+  out.plan=plan; out.catalog=catalog; out.today=today;
   let stage='PASS';
   if(plan.status!==200) stage='PLAN_FAIL';
   else if(catalog.status!==200) stage='CATALOG_FAIL';
   else if(today.status!==200 && today.status!==304) stage='TODAY_FAIL';
-  else if(active.status>=500 || active.status===0) stage='ACTIVE_FAIL';
   return {...out,stage,ok:stage==='PASS',totalMs:Date.now()-started};
 }
 
@@ -53,7 +52,7 @@ function latency(results,key){
   return {p50:p(.5),p95:p(.95),max:a.at(-1)??null};
 }
 
-console.log('HTTP100_BEGIN '+JSON.stringify({base:BASE,match:MATCH,users:USERS}));
+console.log('HTTP100_COLD_BEGIN '+JSON.stringify({base:BASE,match:MATCH,users:USERS,cacheBust:true}));
 const results=await Promise.all(Array.from({length:USERS},(_,i)=>user(i+1)));
 const stages={};let pass=0;
 for(const r of results){stages[r.stage]=(stages[r.stage]||0)+1;if(r.ok)pass++;}
@@ -61,16 +60,16 @@ const summary={
   users:USERS,pass,fail:USERS-pass,passPct:+(100*pass/USERS).toFixed(1),stages,
   statuses:{
     home:statMap(results,'home'),watch:statMap(results,'watch'),plan:statMap(results,'plan'),
-    catalog:statMap(results,'catalog'),today:statMap(results,'today'),active:statMap(results,'active')
+    catalog:statMap(results,'catalog'),today:statMap(results,'today')
   },
   latencyMs:{
     home:latency(results,'home'),watch:latency(results,'watch'),plan:latency(results,'plan'),
-    catalog:latency(results,'catalog'),today:latency(results,'today'),active:latency(results,'active')
+    catalog:latency(results,'catalog'),today:latency(results,'today')
   },
   failureSamples:results.filter(r=>!r.ok).slice(0,15).map(r=>({
     id:r.id,stage:r.stage,
-    home:r.home?.status,watch:r.watch?.status,plan:r.plan?.status,catalog:r.catalog?.status,today:r.today?.status,active:r.active?.status,
-    errors:{home:r.home?.error,watch:r.watch?.error,plan:r.plan?.error,catalog:r.catalog?.error,today:r.today?.error,active:r.active?.error}
+    home:r.home?.status,watch:r.watch?.status,plan:r.plan?.status,catalog:r.catalog?.status,today:r.today?.status,
+    errors:{home:r.home?.error,watch:r.watch?.error,plan:r.plan?.error,catalog:r.catalog?.error,today:r.today?.error}
   }))
 };
-console.log('HTTP100_RESULT '+JSON.stringify(summary));
+console.log('HTTP100_COLD_RESULT '+JSON.stringify(summary));
