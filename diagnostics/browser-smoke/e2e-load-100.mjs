@@ -3,24 +3,35 @@ import { webkit } from 'playwright';
 const BASE = process.env.KZ_BASE_URL || 'https://korazero.com';
 const MATCH = process.env.KZ_MATCH_ID || 'espn-uefa.nations-401861073';
 const VIEWERS = Math.max(1, Number(process.env.VIEWERS || 100));
-const CONTEXTS = Math.max(1, Math.min(VIEWERS, Number(process.env.CONTEXTS || 20)));
-const SETTLE_MS = Math.max(2000, Number(process.env.SETTLE_MS || 8000));
+const CONTEXTS = Math.max(1, Math.min(VIEWERS, Number(process.env.CONTEXTS || 10)));
+const SETTLE_MS = Math.max(1500, Number(process.env.SETTLE_MS || 4000));
 const iphoneUA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5.2 Mobile/15E148 Safari/604.1';
 
 const browser = await webkit.launch({ headless:true });
 const contexts=[];
 for(let i=0;i<CONTEXTS;i++){
-  contexts.push(await browser.newContext({
+  const ctx=await browser.newContext({
     viewport:{width:430,height:932}, userAgent:iphoneUA, isMobile:true, hasTouch:true,
     extraHTTPHeaders:{'Cache-Control':'no-cache'}
-  }));
+  });
+  await ctx.route('**/*', async route => {
+    const req=route.request();
+    const type=req.resourceType();
+    const url=req.url();
+    if (['image','font','media','stylesheet'].includes(type)) return route.abort();
+    if (!url.startsWith(BASE) && /^https?:/i.test(url)) return route.abort();
+    return route.continue();
+  });
+  contexts.push(ctx);
 }
 
 async function oneViewer(id){
   const started=Date.now();
   const ctx=contexts[(id-1)%CONTEXTS];
-  const page=await ctx.newPage();
-  page.setDefaultTimeout(25000);
+  let page;
+  try { page=await ctx.newPage(); }
+  catch(e){ return {id,ok:false,stage:'RUNNER_PAGE_FAIL',error:e.message,statuses:{},counts:{api5xx:0,other5xx:0},ms:Date.now()-started}; }
+  page.setDefaultTimeout(20000);
   const statuses={};
   const counts={streamPlan:0,catalog:0,channel:0,api5xx:0,other5xx:0};
   try{
