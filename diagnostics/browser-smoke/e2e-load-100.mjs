@@ -7,6 +7,7 @@ const STAGGER_MS = Math.max(0, Number(process.env.STAGGER_MS || 25));
 const HOLD_MS = Math.max(2500, Number(process.env.HOLD_MS || 5000));
 const iphoneUA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5.2 Mobile/15E148 Safari/604.1';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+// deploy marker: public e2e Norway-Portugal sanity
 
 const browser = await webkit.launch({ headless: true });
 
