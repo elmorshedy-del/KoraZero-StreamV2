@@ -103,8 +103,7 @@ export async function runHlsSmokeTest({
 export async function runConfiguredHlsSmokeTest(env = process.env, options = {}) {
   const channelId = String(env.V2_SMOKE_TEST_CHANNEL || '').trim();
   const hlsBase = String(env.V2_MIST_HLS_INTERNAL_BASE || '').trim();
-  if (!channelId && !hlsBase) return null;
-  if (!channelId) throw new Error('V2_SMOKE_TEST_CHANNEL is required when V2_MIST_HLS_INTERNAL_BASE is set');
+  if (!channelId) return null;
   if (!hlsBase) throw new Error('V2_MIST_HLS_INTERNAL_BASE is required when V2_SMOKE_TEST_CHANNEL is set');
   return runHlsSmokeTest({ channelId, hlsBase, ...options });
 }
@@ -227,11 +226,11 @@ export async function runFanoutSmokeTest({
 export async function runConfiguredFanoutSmokeTest(env = process.env, options = {}) {
   const viewersRaw = String(env.V2_FANOUT_VIEWERS || '').trim();
   const sourceStatsUrl = String(env.V2_FANOUT_SOURCE_STATS_URL || '').trim();
+  const channelId = String(env.V2_SMOKE_TEST_CHANNEL || '').trim();
+  if (!channelId) return null;
   if (!viewersRaw && !sourceStatsUrl) return null;
 
-  const channelId = String(env.V2_SMOKE_TEST_CHANNEL || '').trim();
   const hlsBase = String(env.V2_MIST_HLS_INTERNAL_BASE || '').trim();
-  if (!channelId) throw new Error('V2_SMOKE_TEST_CHANNEL is required when fanout smoke is enabled');
   if (!hlsBase) throw new Error('V2_MIST_HLS_INTERNAL_BASE is required when fanout smoke is enabled');
   if (!sourceStatsUrl) throw new Error('V2_FANOUT_SOURCE_STATS_URL is required when fanout smoke is enabled');
 
@@ -341,12 +340,12 @@ export async function runRecoverySmokeTest({
 export async function runConfiguredRecoverySmokeTest(env = process.env, options = {}) {
   const sourceControlUrl = String(env.V2_RECOVERY_SOURCE_CONTROL_URL || '').trim();
   const sourceControlToken = String(env.V2_RECOVERY_SOURCE_CONTROL_TOKEN || '').trim();
+  const channelId = String(env.V2_SMOKE_TEST_CHANNEL || '').trim();
+  if (!channelId) return null;
   if (!sourceControlUrl && !sourceControlToken) return null;
 
-  const channelId = String(env.V2_SMOKE_TEST_CHANNEL || '').trim();
   const hlsBase = String(env.V2_MIST_HLS_INTERNAL_BASE || '').trim();
   const sourceStatsUrl = String(env.V2_FANOUT_SOURCE_STATS_URL || '').trim();
-  if (!channelId) throw new Error('V2_SMOKE_TEST_CHANNEL is required when recovery smoke is enabled');
   if (!hlsBase) throw new Error('V2_MIST_HLS_INTERNAL_BASE is required when recovery smoke is enabled');
   if (!sourceStatsUrl) throw new Error('V2_FANOUT_SOURCE_STATS_URL is required when recovery smoke is enabled');
   if (!sourceControlUrl) throw new Error('V2_RECOVERY_SOURCE_CONTROL_URL is required when recovery smoke is enabled');

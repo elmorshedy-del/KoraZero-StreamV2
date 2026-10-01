@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runConfiguredHlsSmokeTest, runHlsSmokeTest } from '../server/hls-smoke.js';
+import { runConfiguredFanoutSmokeTest, runConfiguredHlsSmokeTest, runConfiguredRecoverySmokeTest, runHlsSmokeTest } from '../server/hls-smoke.js';
 
 function response({ status = 200, contentType = 'application/vnd.apple.mpegurl', body = '#EXTM3U\n#EXTINF:6.0,\nsegment.ts\n' } = {}) {
   return {
@@ -110,6 +110,21 @@ test('configured HLS smoke is disabled unless both test variables are present', 
     () => runConfiguredHlsSmokeTest({ V2_SMOKE_TEST_CHANNEL: 'test-hls' }, { fetchFn }),
     /V2_MIST_HLS_INTERNAL_BASE/i,
   );
+});
+
+test('blank smoke channel disables all startup smoke paths even when auxiliary diagnostic variables remain configured', async () => {
+  const env = {
+    V2_SMOKE_TEST_CHANNEL: '',
+    V2_MIST_HLS_INTERNAL_BASE: 'http://v2-mist.railway.internal:8080/hls',
+    V2_FANOUT_VIEWERS: '5',
+    V2_FANOUT_SOURCE_STATS_URL: 'http://stats.invalid',
+    V2_RECOVERY_SOURCE_CONTROL_URL: 'http://control.invalid',
+    V2_RECOVERY_SOURCE_CONTROL_TOKEN: 'not-used',
+  };
+  const fetchFn = async () => { throw new Error('must not fetch'); };
+  assert.equal(await runConfiguredHlsSmokeTest(env, { fetchFn }), null);
+  assert.equal(await runConfiguredFanoutSmokeTest(env, { fetchFn }), null);
+  assert.equal(await runConfiguredRecoverySmokeTest(env, { fetchFn }), null);
 });
 
 test('configured HLS smoke uses private base and logical test channel', async () => {
