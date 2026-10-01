@@ -32,6 +32,50 @@ controller.subscribe((state) => {
   messageEl.textContent = state.error?.message ?? state.status;
 });
 
+function savedOperatorPin() {
+  return (localStorage.getItem('kz_v2_operator_pin') || '').trim();
+}
+
+async function fetchCatalogOperatorDescriptor(streamId, { signal = null } = {}) {
+  const pin = savedOperatorPin();
+  if (!pin) {
+    throw new Error('احفظ Operator PIN من صفحة Remote أولاً ثم ارجع للكتالوج.');
+  }
+
+  const response = await fetch(`/operator/switch/${encodeURIComponent(streamId)}`, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'x-operator-pin': pin,
+    },
+    signal: signal || undefined,
+  });
+
+  if (!response.ok) {
+    let detail = null;
+    try {
+      const body = await response.json();
+      detail = body?.detail || body?.error || null;
+    } catch {}
+    throw new Error(detail || `Operator switch failed with HTTP ${response.status}`);
+  }
+
+  const descriptor = await response.json();
+  if (!descriptor
+    || typeof descriptor.channelId !== 'string'
+    || typeof descriptor.manifestUrl !== 'string'
+    || !descriptor.manifestUrl) {
+    throw new Error('Invalid operator playback descriptor');
+  }
+
+  return Object.freeze({
+    channelId: descriptor.channelId,
+    manifestUrl: descriptor.manifestUrl,
+    verified: descriptor.verified === true,
+    diagnostics: descriptor.diagnostics ?? null,
+  });
+}
+
 function filteredChannels() {
   const query = (searchEl?.value || '').trim().toLocaleLowerCase();
   const categoryId = categoryEl?.value || '';
@@ -80,9 +124,9 @@ async function selectChannel(channel, { updateUrl = true, userInitiated = true }
   if (userInitiated) controller.beginUserPlaybackIntent();
 
   try {
-    const descriptor = await fetchPlaybackDescriptor(channel.streamId, {
-      signal: myController.signal,
-    });
+    const descriptor = /^\d+$/.test(channel.streamId)
+      ? await fetchCatalogOperatorDescriptor(channel.streamId, { signal: myController.signal })
+      : await fetchPlaybackDescriptor(channel.streamId, { signal: myController.signal });
     if (myGeneration !== selectionGeneration || myController.signal.aborted) return;
     if (diagnosticEl) {
       const d = descriptor.diagnostics || {};
@@ -161,8 +205,14 @@ try {
   await loadCatalog();
   if (initialChannelId && /^\d+$/.test(initialChannelId)) {
     const channel = catalog.find((item) => item.streamId === initialChannelId);
-    if (channel) await selectChannel(channel, { updateUrl: false, userInitiated: false });
-    else messageEl.textContent = 'القناة غير موجودة في الكتالوج الحالي.';
+    if (channel) {
+      selectedStreamId = channel.streamId;
+      titleEl.textContent = channel.name;
+      renderCatalog();
+      messageEl.textContent = 'اضغط على القناة لتشغيلها.';
+    } else {
+      messageEl.textContent = 'القناة غير موجودة في الكتالوج الحالي.';
+    }
   } else if (initialChannelId) {
     if (initialTitle) titleEl.textContent = initialTitle;
     controller.load(await fetchPlaybackDescriptor(initialChannelId), { autoplay: true });
