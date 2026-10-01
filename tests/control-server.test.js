@@ -158,7 +158,7 @@ test('public catalog returns sanitized provider channel metadata', async () => {
 });
 
 
-test('operator routes require the operator PIN and only allow fixed V2 stream ids', async () => {
+test('operator routes require the operator PIN and allow authenticated numeric catalog stream ids', async () => {
   await withServer(async ({ base, gateway }) => {
     let response = await fetch(`${base}/operator/active`);
     assert.equal(response.status, 401);
@@ -170,15 +170,19 @@ test('operator routes require the operator PIN and only allow fixed V2 stream id
     response = await fetch(`${base}/operator/switch/3645`, { method: 'POST', headers });
     assert.equal(response.status, 200);
 
-    response = await fetch(`${base}/operator/switch/99999`, { method: 'POST', headers });
+    response = await fetch(`${base}/operator/switch/2449`, { method: 'POST', headers });
+    assert.equal(response.status, 200);
+
+    response = await fetch(`${base}/operator/switch/not-a-stream`, { method: 'POST', headers });
     assert.equal(response.status, 400);
 
     response = await fetch(`${base}/operator/off`, { method: 'POST', headers });
     assert.equal(response.status, 200);
 
-    assert.deepEqual(gateway.calls.slice(-3), [
+    assert.deepEqual(gateway.calls.slice(-4), [
       ['active'],
       ['activate', '3645'],
+      ['activate', '2449'],
       ['stopDynamic'],
     ]);
   });

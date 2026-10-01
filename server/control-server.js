@@ -74,7 +74,7 @@ function createRequestAbort(req, res) {
   };
 }
 
-const OPERATOR_STREAM_IDS = new Set(['3645', '3644', '3653', '3652', '3651', '89778', '89779']);
+const OPERATOR_STREAM_ID = /^\d+$/;
 
 function operatorAuthorized(req, operatorPin) {
   if (!operatorPin) return false;
@@ -141,7 +141,7 @@ export function createControlServer({ gateway, internalToken, operatorPin = null
 
         const streamId = channelFrom(pathname, '/operator/switch/');
         if (req.method === 'POST' && streamId) {
-          if (!OPERATOR_STREAM_IDS.has(streamId)) {
+          if (!OPERATOR_STREAM_ID.test(streamId)) {
             return sendJson(res, 400, { error: 'stream_not_allowed' });
           }
           return sendJson(res, 200, await gateway.activate(streamId));
