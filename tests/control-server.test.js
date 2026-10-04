@@ -170,7 +170,7 @@ test('operator routes require the operator PIN and allow authenticated numeric c
     response = await fetch(`${base}/operator/switch/3645`, { method: 'POST', headers });
     assert.equal(response.status, 200);
 
-    response = await fetch(`${base}/operator/switch/2449`, { method: 'POST', headers });
+    response = await fetch(`${base}/operator/switch/677`, { method: 'POST', headers });
     assert.equal(response.status, 200);
 
     response = await fetch(`${base}/operator/switch/not-a-stream`, { method: 'POST', headers });
@@ -182,7 +182,7 @@ test('operator routes require the operator PIN and allow authenticated numeric c
     assert.deepEqual(gateway.calls.slice(-4), [
       ['active'],
       ['activate', '3645'],
-      ['activate', '2449'],
+      ['activate', '677'],
       ['stopDynamic'],
     ]);
   });
