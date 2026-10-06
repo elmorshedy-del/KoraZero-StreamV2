@@ -42,25 +42,47 @@ async function fetchCatalogOperatorDescriptor(streamId, { signal = null } = {}) 
     throw new Error('احفظ Operator PIN من صفحة Remote أولاً ثم ارجع للكتالوج.');
   }
 
-  const response = await fetch(`/operator/switch/${encodeURIComponent(streamId)}`, {
+  const headers = {
+    accept: 'application/json',
+    'x-operator-pin': pin,
+  };
+  const startedResponse = await fetch(`/operator/switch-async/${encodeURIComponent(streamId)}`, {
     method: 'POST',
-    headers: {
-      accept: 'application/json',
-      'x-operator-pin': pin,
-    },
+    headers,
     signal: signal || undefined,
   });
+  const startedBody = await startedResponse.json().catch(() => ({}));
+  if (!startedResponse.ok) {
+    throw new Error(startedBody?.detail || startedBody?.error || `Operator switch failed with HTTP ${startedResponse.status}`);
+  }
+  if (!startedBody?.jobId) throw new Error('Operator switch did not return a job id');
 
-  if (!response.ok) {
-    let detail = null;
-    try {
-      const body = await response.json();
-      detail = body?.detail || body?.error || null;
-    } catch {}
-    throw new Error(detail || `Operator switch failed with HTTP ${response.status}`);
+  const deadline = Date.now() + 90000;
+  let job = null;
+  while (Date.now() < deadline) {
+    if (signal?.aborted) {
+      const error = new Error('Switch status polling aborted');
+      error.name = 'AbortError';
+      throw error;
+    }
+    const statusResponse = await fetch(`/operator/switch-status/${encodeURIComponent(startedBody.jobId)}`, {
+      headers,
+      signal: signal || undefined,
+      cache: 'no-store',
+    });
+    job = await statusResponse.json().catch(() => ({}));
+    if (!statusResponse.ok) {
+      throw new Error(job?.detail || job?.error || `Switch status failed with HTTP ${statusResponse.status}`);
+    }
+    if (job.status === 'success') break;
+    if (job.status === 'failed') throw new Error(job.error || 'Operator switch failed');
+    await new Promise((resolve) => setTimeout(resolve, 900));
   }
 
-  const descriptor = await response.json();
+  if (!job || job.status !== 'success') {
+    throw new Error('التبديل ما زال قيد التحقق. انتظر لحظات ثم حدّث الصفحة.');
+  }
+  const descriptor = job.result;
   if (!descriptor
     || typeof descriptor.channelId !== 'string'
     || typeof descriptor.manifestUrl !== 'string'

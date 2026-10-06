@@ -87,6 +87,46 @@ export function createControlServer({ gateway, internalToken, operatorPin = null
   if (!gateway) throw new Error('control server requires gateway');
   if (!internalToken) throw new Error('control server requires internalToken');
 
+  const operatorSwitchJobs = new Map();
+  let operatorSwitchSequence = 0;
+
+  function startOperatorSwitch(streamId) {
+    const jobId = `${Date.now().toString(36)}-${(++operatorSwitchSequence).toString(36)}`;
+    const job = {
+      jobId,
+      streamId,
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      completedAt: null,
+      result: null,
+      error: null,
+    };
+    operatorSwitchJobs.set(jobId, job);
+
+    Promise.resolve()
+      .then(() => gateway.activate(streamId))
+      .then((result) => {
+        job.status = 'success';
+        job.result = result;
+        job.completedAt = new Date().toISOString();
+      })
+      .catch((error) => {
+        job.status = 'failed';
+        job.error = error instanceof Error ? error.message : String(error);
+        job.completedAt = new Date().toISOString();
+      });
+
+    if (operatorSwitchJobs.size > 100) {
+      for (const [id, candidate] of operatorSwitchJobs) {
+        if (candidate.status !== 'running') {
+          operatorSwitchJobs.delete(id);
+          if (operatorSwitchJobs.size <= 75) break;
+        }
+      }
+    }
+    return job;
+  }
+
   return createServer(async (req, res) => {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     const { pathname } = url;
@@ -137,6 +177,26 @@ export function createControlServer({ gateway, internalToken, operatorPin = null
 
         if (req.method === 'POST' && pathname === '/operator/off') {
           return sendJson(res, 200, await gateway.stopDynamic());
+        }
+
+        const asyncStreamId = channelFrom(pathname, '/operator/switch-async/');
+        if (req.method === 'POST' && asyncStreamId) {
+          if (!OPERATOR_STREAM_ID.test(asyncStreamId)) {
+            return sendJson(res, 400, { error: 'stream_not_allowed' });
+          }
+          const job = startOperatorSwitch(asyncStreamId);
+          return sendJson(res, 202, {
+            jobId: job.jobId,
+            streamId: job.streamId,
+            status: job.status,
+          });
+        }
+
+        const switchJobId = channelFrom(pathname, '/operator/switch-status/');
+        if (req.method === 'GET' && switchJobId) {
+          const job = operatorSwitchJobs.get(switchJobId);
+          if (!job) return sendJson(res, 404, { error: 'switch_job_not_found' });
+          return sendJson(res, 200, job);
         }
 
         const streamId = channelFrom(pathname, '/operator/switch/');

@@ -188,6 +188,32 @@ test('operator routes require the operator PIN and allow authenticated numeric c
   });
 });
 
+test('async operator switch returns immediately and exposes completion status', async () => {
+  await withServer(async ({ base, gateway }) => {
+    const headers = { 'x-operator-pin': 'operator-pin' };
+    const response = await fetch(`${base}/operator/switch-async/244603`, { method: 'POST', headers });
+    assert.equal(response.status, 202);
+    const started = await response.json();
+    assert.equal(started.streamId, '244603');
+    assert.equal(started.status, 'running');
+    assert.ok(started.jobId);
+
+    let job = null;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const statusResponse = await fetch(`${base}/operator/switch-status/${encodeURIComponent(started.jobId)}`, { headers });
+      assert.equal(statusResponse.status, 200);
+      job = await statusResponse.json();
+      if (job.status !== 'running') break;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    assert.equal(job.status, 'success');
+    assert.equal(job.streamId, '244603');
+    assert.equal(job.result.channelId, '244603');
+    assert.ok(gateway.calls.some((call) => call[0] === 'activate' && call[1] === '244603'));
+  });
+});
+
 test('operator remote page is served without embedding credentials', async () => {
   await withServer(async ({ base }) => {
     const response = await fetch(`${base}/remote.html`);

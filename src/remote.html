@@ -77,6 +77,7 @@
     ["89778","Al Kass 1"],
     ["89779","Al Kass 2"],
     ["677","ON Sport HD"],
+    ["244603","Shasha Sport 2"],
   ];
   const pin = document.getElementById("pin");
   const save = document.getElementById("save");
@@ -162,12 +163,23 @@
       renderButtons();
     }
   }
+  function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
   async function switchTo(id, label) {
     if (busy) return;
     if (!pin.value.trim()) { authMsg.textContent = "Enter the operator PIN first."; pin.focus(); return; }
-    setBusy(true, "Switching to " + label + "… stopping the old input, waiting for the provider slot, then verifying HLS.");
+    setBusy(true, "Starting " + label + "… the switch will continue on the server while this page polls its status.");
     try {
-      const result = await api("/operator/switch/" + encodeURIComponent(id), { method:"POST" });
+      const started = await api("/operator/switch-async/" + encodeURIComponent(id), { method:"POST" });
+      const deadline = Date.now() + 90000;
+      let result = null;
+      while (Date.now() < deadline) {
+        const job = await api("/operator/switch-status/" + encodeURIComponent(started.jobId));
+        if (job.status === "success") { result = job.result || {}; break; }
+        if (job.status === "failed") throw new Error(job.error || "Switch failed");
+        switchMsg.textContent = "Switching to " + label + "… waiting for provider slot / HLS verification.";
+        await wait(900);
+      }
+      if (!result) throw new Error("Switch is still verifying. Refresh in a moment to see the active channel.");
       activeStream = id;
       switchMsg.textContent = result.alreadyActive
         ? label + " was already active — nothing was restarted."
