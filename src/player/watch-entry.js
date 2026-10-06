@@ -1,6 +1,7 @@
 import { createPlayerController } from './player-controller.js';
 import { createBrowserHlsFactory } from './hls-adapter.js';
 import { fetchPlaybackDescriptor } from './playback-descriptor.js';
+import { waitForPoll } from './poll-delay.js';
 
 const video = document.querySelector('#live-video');
 const stateEl = document.querySelector('#player-state');
@@ -76,7 +77,7 @@ async function fetchCatalogOperatorDescriptor(streamId, { signal = null } = {}) 
     }
     if (job.status === 'success') break;
     if (job.status === 'failed') throw new Error(job.error || 'Operator switch failed');
-    await new Promise((resolve) => setTimeout(resolve, 900));
+    await waitForPoll(900);
   }
 
   if (!job || job.status !== 'success') {
