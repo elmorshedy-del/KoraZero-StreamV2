@@ -68,18 +68,38 @@ test('IPTV relay GET follows redirects and streams bytes with one provider pull'
   assert.equal(relay.stats().maxConcurrentPulls, 1);
 });
 
-test('IPTV relay fails closed on a second concurrent provider pull', async () => {
+test('IPTV relay hands off a same-stream reconnect without overlapping provider pulls', async () => {
+  let providerActive = 0;
+  let maxProviderActive = 0;
+  let providerCancels = 0;
+
   const relay = createIptvRelay(env, {
-    fetchFn: async () => new Response(new ReadableStream({
-      start(controller) { controller.enqueue(new Uint8Array([0x47])); },
-    }), { status: 200, headers: { 'content-type': 'video/mp2t' } }),
+    fetchFn: async () => {
+      providerActive += 1;
+      maxProviderActive = Math.max(maxProviderActive, providerActive);
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(concat(tsPacket(256, 0), tsPacket(256, 1)));
+        },
+        cancel() {
+          providerCancels += 1;
+          providerActive = Math.max(0, providerActive - 1);
+        },
+      }), { status: 200, headers: { 'content-type': 'video/mp2t' } });
+    },
   });
+
   const first = await relay.handle({ method: 'GET', pathname: '/live/3974.ts' });
+  assert.equal(first.status, 200);
+  assert.equal(relay.stats().activePulls, 1);
+
   const second = await relay.handle({ method: 'GET', pathname: '/live/3974.ts' });
-  assert.equal(second.status, 503);
-  assert.equal(relay.stats().maxConcurrentPulls, 1);
-  assert.equal(relay.stats().rejectedConcurrentPulls, 1);
-  await first.body.cancel();
+  assert.equal(second.status, 200);
+  assert.equal(providerCancels, 1);
+  assert.equal(maxProviderActive, 1);
+  assert.equal(relay.stats().activePulls, 1);
+
+  await second.body.cancel();
   assert.equal(relay.stats().activePulls, 0);
 });
 
