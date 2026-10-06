@@ -1,7 +1,6 @@
 import { createPlayerController } from './player-controller.js';
 import { createBrowserHlsFactory } from './hls-adapter.js';
 import { fetchPlaybackDescriptor } from './playback-descriptor.js';
-import { waitForPoll } from './poll-delay.js';
 
 const video = document.querySelector('#live-video');
 const stateEl = document.querySelector('#player-state');
@@ -43,47 +42,25 @@ async function fetchCatalogOperatorDescriptor(streamId, { signal = null } = {}) 
     throw new Error('احفظ Operator PIN من صفحة Remote أولاً ثم ارجع للكتالوج.');
   }
 
-  const headers = {
-    accept: 'application/json',
-    'x-operator-pin': pin,
-  };
-  const startedResponse = await fetch(`/operator/switch-async/${encodeURIComponent(streamId)}`, {
+  const response = await fetch(`/operator/switch/${encodeURIComponent(streamId)}`, {
     method: 'POST',
-    headers,
+    headers: {
+      accept: 'application/json',
+      'x-operator-pin': pin,
+    },
     signal: signal || undefined,
   });
-  const startedBody = await startedResponse.json().catch(() => ({}));
-  if (!startedResponse.ok) {
-    throw new Error(startedBody?.detail || startedBody?.error || `Operator switch failed with HTTP ${startedResponse.status}`);
-  }
-  if (!startedBody?.jobId) throw new Error('Operator switch did not return a job id');
 
-  const deadline = Date.now() + 90000;
-  let job = null;
-  while (Date.now() < deadline) {
-    if (signal?.aborted) {
-      const error = new Error('Switch status polling aborted');
-      error.name = 'AbortError';
-      throw error;
-    }
-    const statusResponse = await fetch(`/operator/switch-status/${encodeURIComponent(startedBody.jobId)}`, {
-      headers,
-      signal: signal || undefined,
-      cache: 'no-store',
-    });
-    job = await statusResponse.json().catch(() => ({}));
-    if (!statusResponse.ok) {
-      throw new Error(job?.detail || job?.error || `Switch status failed with HTTP ${statusResponse.status}`);
-    }
-    if (job.status === 'success') break;
-    if (job.status === 'failed') throw new Error(job.error || 'Operator switch failed');
-    await waitForPoll(900);
+  if (!response.ok) {
+    let detail = null;
+    try {
+      const body = await response.json();
+      detail = body?.detail || body?.error || null;
+    } catch {}
+    throw new Error(detail || `Operator switch failed with HTTP ${response.status}`);
   }
 
-  if (!job || job.status !== 'success') {
-    throw new Error('التبديل ما زال قيد التحقق. انتظر لحظات ثم حدّث الصفحة.');
-  }
-  const descriptor = job.result;
+  const descriptor = await response.json();
   if (!descriptor
     || typeof descriptor.channelId !== 'string'
     || typeof descriptor.manifestUrl !== 'string'
