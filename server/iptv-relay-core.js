@@ -328,7 +328,6 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
 
   let catalogCache = null;
   let catalogPromise = null;
-  const activePullByStream = new Map();
 
   function getStreamStats(streamId) {
     if (!streamStats[streamId]) streamStats[streamId] = createStreamStats();
@@ -474,30 +473,10 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
     }
     if (method !== 'GET') return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
 
-    const existingPull = activePullByStream.get(requestedStreamId);
-    if (existingPull) {
-      log({ event: 'same-stream-handoff-start', streamId: requestedStreamId });
-      existingPull.abort();
-      const released = await Promise.race([
-        existingPull.released.then(() => true),
-        new Promise((resolve) => setTimeout(() => resolve(false), 1_500)),
-      ]);
-      if (!released) {
-        stats.rejectedConcurrentPulls += 1;
-        currentStreamStats.rejectedConcurrentPulls += 1;
-        log({ event: 'same-stream-handoff-timeout', streamId: requestedStreamId });
-        return new Response('Previous upstream pull is still closing', {
-          status: 503,
-          headers: { 'retry-after': '1', 'cache-control': 'no-store' },
-        });
-      }
-      log({ event: 'same-stream-handoff-ready', streamId: requestedStreamId });
-    }
-
-    if (maxActivePulls > 0 && stats.activePulls >= maxActivePulls) {
+    if ((maxActivePulls > 0 && stats.activePulls >= maxActivePulls) || currentStreamStats.activePulls >= 1) {
       stats.rejectedConcurrentPulls += 1;
       currentStreamStats.rejectedConcurrentPulls += 1;
-      return new Response('Provider pull already active', {
+      return new Response('Upstream pull already active', {
         status: 503,
         headers: { 'retry-after': '1', 'cache-control': 'no-store' },
       });
@@ -510,34 +489,16 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
     stats.maxConcurrentPulls = Math.max(stats.maxConcurrentPulls, stats.activePulls);
 
     const controller = new AbortController();
-    let reader = null;
-    let abort = null;
+    const abort = () => controller.abort();
+    signal?.addEventListener?.('abort', abort, { once: true });
     let released = false;
-    let resolveReleased;
-    const releasedPromise = new Promise((resolve) => { resolveReleased = resolve; });
-    let pullState = null;
     const release = () => {
       if (released) return;
       released = true;
-      if (abort) signal?.removeEventListener?.('abort', abort);
+      signal?.removeEventListener?.('abort', abort);
       stats.activePulls = Math.max(0, stats.activePulls - 1);
       currentStreamStats.activePulls = Math.max(0, currentStreamStats.activePulls - 1);
-      if (activePullByStream.get(requestedStreamId) === pullState) {
-        activePullByStream.delete(requestedStreamId);
-      }
-      resolveReleased();
     };
-    abort = () => {
-      controller.abort();
-      if (reader) {
-        Promise.resolve(reader.cancel(signal?.reason))
-          .catch(() => {})
-          .finally(release);
-      }
-    };
-    signal?.addEventListener?.('abort', abort, { once: true });
-    pullState = Object.freeze({ abort, released: releasedPromise });
-    activePullByStream.set(requestedStreamId, pullState);
 
     const target = `${portal}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${requestedStreamId}.ts`;
     try {
@@ -613,8 +574,7 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
         });
       }
 
-      reader = sourceBody.getReader();
-      if (signal?.aborted) abort();
+      const reader = sourceBody.getReader();
       const framer = createTsFramer();
       const audioTimestampDelay = createAudioTimestampDelay(audioDelayMs);
       let pendingRead = null;
