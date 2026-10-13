@@ -489,16 +489,25 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
     stats.maxConcurrentPulls = Math.max(stats.maxConcurrentPulls, stats.activePulls);
 
     const controller = new AbortController();
-    const abort = () => controller.abort();
-    signal?.addEventListener?.('abort', abort, { once: true });
+    let reader = null;
+    let abort = null;
     let released = false;
     const release = () => {
       if (released) return;
       released = true;
-      signal?.removeEventListener?.('abort', abort);
+      if (abort) signal?.removeEventListener?.('abort', abort);
       stats.activePulls = Math.max(0, stats.activePulls - 1);
       currentStreamStats.activePulls = Math.max(0, currentStreamStats.activePulls - 1);
     };
+    abort = () => {
+      controller.abort();
+      if (reader) {
+        Promise.resolve(reader.cancel(signal?.reason))
+          .catch(() => {})
+          .finally(release);
+      }
+    };
+    signal?.addEventListener?.('abort', abort, { once: true });
 
     const target = `${portal}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${requestedStreamId}.ts`;
     try {
@@ -574,7 +583,8 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
         });
       }
 
-      const reader = sourceBody.getReader();
+      reader = sourceBody.getReader();
+      if (signal?.aborted) abort();
       const framer = createTsFramer();
       const audioTimestampDelay = createAudioTimestampDelay(audioDelayMs);
       let pendingRead = null;
