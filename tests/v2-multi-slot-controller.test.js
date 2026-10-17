@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { createChannelRegistry } from '../server/channel-registry.js';
 import { createGatewayService } from '../server/gateway-service.js';
 
-function createMistFake(initial = {}) {
+function createMistFake(initial = {}, inactive = []) {
   const sources = new Map(Object.entries(initial));
+  const inactiveNames = new Set(inactive);
   const calls = [];
   return {
     calls,
@@ -37,7 +38,7 @@ function createMistFake(initial = {}) {
     },
     async getStream(name) {
       calls.push(['getStream', name]);
-      const active = sources.has(name);
+      const active = sources.has(name) && !inactiveNames.has(name);
       return {
         streamName: name,
         active,
@@ -74,8 +75,8 @@ function catalogClient() {
   };
 }
 
-function fixture(initial = {}) {
-  const mist = createMistFake(initial);
+function fixture(initial = {}, inactive = []) {
+  const mist = createMistFake(initial, inactive);
   const registry = createChannelRegistry({});
   const accounts = [
     { id: 'a', relayBase: 'http://relay-a.railway.internal:8080', catalogClient: catalogClient() },
@@ -216,6 +217,21 @@ test('slot-scoped off never stops the other live slot', async () => {
   const state = await gateway.active();
   assert.equal(state.slots.find((slot) => slot.slot === 'a').mode, 'manual');
   assert.equal(state.slots.find((slot) => slot.slot === 'b').channelId, 'iptv-3653');
+});
+
+test('slot replacement deletes an owned configured stream even when Mist reports it inactive', async () => {
+  const { gateway, mist } = fixture(
+    {
+      'iptv-3645': 'http://relay-a.railway.internal:8080/live/3645.ts',
+    },
+    ['iptv-3645'],
+  );
+
+  const result = await gateway.activate('3653', { slot: 'a' });
+  assert.equal(result.slot, 'a');
+  assert.equal(mist.sources.has('iptv-3645'), false);
+  assert.equal(mist.sources.get('iptv-3653'), 'http://relay-a.railway.internal:8080/live/3653.ts');
+  assert.ok(mist.calls.some((call) => call[0] === 'deleteStream' && call[1] === 'iptv-3645'));
 });
 
 test('multi-account Off requires an explicit slot unless all is explicitly requested', async () => {
