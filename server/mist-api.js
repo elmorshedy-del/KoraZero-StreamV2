@@ -118,16 +118,34 @@ export function createMistApi({ endpoint = DEFAULT_ENDPOINT, username = '', pass
     return Number.isFinite(numeric) ? numeric : null;
   }
 
+  async function configuredStreamSources() {
+    const response = await command({ config_backup: true });
+    const streams = response?.config_backup?.streams;
+    if (!streams || typeof streams !== 'object' || Array.isArray(streams)) return {};
+    return Object.fromEntries(
+      Object.entries(streams).map(([name, value]) => [
+        name,
+        typeof value?.source === 'string' ? value.source : null,
+      ]),
+    );
+  }
+
   return Object.freeze({
     ensureHttpProtocol,
     ensureHlsProtocol,
     ensureViewerSessionMode,
 
     async listConfiguredStreams() {
-      const response = await command({ config_backup: true });
-      const streams = response?.config_backup?.streams;
-      if (!streams || typeof streams !== 'object' || Array.isArray(streams)) return [];
-      return Object.keys(streams).sort();
+      return Object.keys(await configuredStreamSources()).sort();
+    },
+
+    async listConfiguredStreamSources() {
+      return configuredStreamSources();
+    },
+
+    async getStreamSource(name) {
+      const streams = await configuredStreamSources();
+      return Object.hasOwn(streams, name) ? streams[name] : null;
     },
 
     async addStream(name, source, options = {}) {
