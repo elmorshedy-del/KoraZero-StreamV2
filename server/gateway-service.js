@@ -888,6 +888,18 @@ export function createGatewayService({
       return { slot: String(slot), mode: state.mode, manualUntil: state.manualUntil };
     },
 
+    setManualUntil(slot, manualUntil) {
+      if (!enhancedSlots) return { slot: 'a', mode: 'manual', manualUntil };
+      const slotId = String(slot || '');
+      const state = slotState.get(slotId);
+      if (!state || !accountById(slotId)) throw codedError('invalid_slot', 'Unknown V2 slot');
+      const parsed = Date.parse(manualUntil || '');
+      if (!Number.isFinite(parsed)) throw codedError('invalid_manual_until', 'manualUntil must be a valid timestamp');
+      state.mode = 'manual';
+      state.manualUntil = new Date(parsed).toISOString();
+      return { slot: slotId, mode: state.mode, manualUntil: state.manualUntil };
+    },
+
     setEnabledAccounts(ids) {
       if (!enhancedSlots) return;
       const requested = Array.isArray(ids) ? ids.map(String) : [];
