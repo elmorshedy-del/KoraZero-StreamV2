@@ -1,4 +1,5 @@
 import { createApp } from './app.js';
+import { createSlotScheduler } from './slot-scheduler.js';
 import {
   runConfiguredFanoutSmokeTest,
   runConfiguredHlsSmokeTest,
@@ -22,6 +23,18 @@ if (fanout) {
 
 // Emergency: keep automatic remount disabled; Mist handles reconnects natively.
 if (false) app.sourceSupervisor.start();
+
+if (process.env.V2_AUTO_SCHEDULE === 'true') {
+  const scheduler = createSlotScheduler({
+    gateway: app.gateway,
+    scheduleUrl: String(process.env.V2_SLOT_SCHEDULE_URL || '').trim()
+      || 'https://korazero.com/assets/data/v2-slot-schedule.json',
+    todayUrl: String(process.env.V2_TODAY_URL || '').trim()
+      || 'https://korazero.com/assets/data/today.json',
+  });
+  scheduler.start();
+  console.log('V2 automatic slot scheduler enabled');
+}
 
 const recovery = emergency3645Only ? null : await runConfiguredRecoverySmokeTest(process.env);
 if (recovery) {
