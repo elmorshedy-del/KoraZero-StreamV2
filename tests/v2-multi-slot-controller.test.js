@@ -239,6 +239,26 @@ test('manual switch marks only that slot manual and Resume Auto clears it', asyn
   assert.equal(state.slots.find((slot) => slot.slot === 'a').manualUntil, null);
 });
 
+test('automation cannot replace an actively held manual slot', async () => {
+  const { gateway, mist } = fixture();
+  await gateway.activate('3645', { slot: 'a', manual: true });
+
+  await assert.rejects(
+    () => gateway.activate('3653', { slot: 'a' }),
+    (error) => error?.code === 'slot_manual_hold',
+  );
+
+  assert.equal(mist.sources.get('iptv-3645'), 'http://relay-a.railway.internal:8080/live/3645.ts');
+  assert.equal(mist.sources.has('iptv-3653'), false);
+});
+
+test('automatic free-slot selection skips a manually held empty slot', async () => {
+  const { gateway } = fixture();
+  await gateway.stopDynamic({ slot: 'a', manual: true });
+  const result = await gateway.activate('3653');
+  assert.equal(result.slot, 'b');
+});
+
 test('enabled-account fallback reduces advertised capacity without touching Mist', async () => {
   const { gateway, mist } = fixture();
   gateway.setEnabledAccounts(['a']);
