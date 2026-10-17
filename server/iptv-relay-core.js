@@ -150,6 +150,10 @@ function createStreamStats() {
     realBytes: 0,
     keepaliveBursts: 0,
     keepaliveBytes: 0,
+    hlsSegmentRetries: 0,
+    hlsSegmentSkips: 0,
+    hlsPlaylistRetries: 0,
+    hlsCatchUps: 0,
     transportMode: null,
     upstreamStatus: null,
     upstreamContentType: null,
@@ -423,6 +427,10 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
     realBytes: 0,
     keepaliveBursts: 0,
     keepaliveBytes: 0,
+    hlsSegmentRetries: 0,
+    hlsSegmentSkips: 0,
+    hlsPlaylistRetries: 0,
+    hlsCatchUps: 0,
   };
 
   function snapshot() {
@@ -559,6 +567,22 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
           fetchFn,
           signal: controller.signal,
           userAgent: VLC_USER_AGENT,
+          onRecovery(meta) {
+            if (meta.kind === 'segment-retry') {
+              stats.hlsSegmentRetries += 1;
+              currentStreamStats.hlsSegmentRetries += 1;
+            } else if (meta.kind === 'segment-skip') {
+              stats.hlsSegmentSkips += 1;
+              currentStreamStats.hlsSegmentSkips += 1;
+            } else if (meta.kind === 'playlist-retry') {
+              stats.hlsPlaylistRetries += 1;
+              currentStreamStats.hlsPlaylistRetries += 1;
+            } else if (meta.kind === 'catch-up') {
+              stats.hlsCatchUps += 1;
+              currentStreamStats.hlsCatchUps += 1;
+            }
+            log({ event: 'provider-hls-recovery', streamId: requestedStreamId, ...meta });
+          },
           onPlaylist(meta) {
             currentStreamStats.playlistFetches += 1;
             log({ event: 'hls-playlist', streamId: requestedStreamId, ...meta });
