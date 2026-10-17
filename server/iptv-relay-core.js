@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createProviderHlsTsStream, isHlsResponse } from './provider-hls-source.js';
 
 const VLC_USER_AGENT = 'VLC/3.0.18 LibVLC/3.0.18';
@@ -394,12 +395,17 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
   async function accountStatus() {
     const payload = await fetchProviderJson();
     const user = payload?.user_info || {};
+    const accountFingerprint = createHash('sha256')
+      .update(`${portal}|${username}`)
+      .digest('hex')
+      .slice(0, 12);
     return {
       auth: Number(user.auth || 0),
       status: cleanCatalogText(user.status, 40),
       activeConnections: parseNonNegativeInt(user.active_cons, 0),
       maxConnections: parseNonNegativeInt(user.max_connections, 0),
       allowedOutputFormats: Array.isArray(user.allowed_output_formats) ? user.allowed_output_formats.map((value) => cleanCatalogText(value, 20)).filter(Boolean) : [],
+      accountFingerprint,
     };
   }
 
