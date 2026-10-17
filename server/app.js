@@ -65,7 +65,6 @@ export function createApp(env = process.env, { fetchFn = globalThis.fetch, stati
       viewerSessionMode,
       channels: runtime.registry.entries().map((entry) => entry.channelId),
       activateChannel,
-      v2State: await runtime.gateway.active().catch(() => null),
     };
   }
 
