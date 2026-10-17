@@ -135,8 +135,20 @@ export function createControlServer({ gateway, internalToken, operatorPin = null
           return sendJson(res, 200, await gateway.active());
         }
 
+        if (req.method === 'GET' && pathname === '/operator/catalog') {
+          const account = url.searchParams.get('account') || null;
+          return sendJson(res, 200, await gateway.catalog(account));
+        }
+
         if (req.method === 'POST' && pathname === '/operator/off') {
-          return sendJson(res, 200, await gateway.stopDynamic());
+          const slot = url.searchParams.get('slot') || null;
+          return sendJson(res, 200, await gateway.stopDynamic({ slot, manual: true }));
+        }
+
+        if (req.method === 'POST' && pathname === '/operator/resume-auto') {
+          const slot = url.searchParams.get('slot') || null;
+          if (!slot) return sendJson(res, 400, { error: 'slot_required' });
+          return sendJson(res, 200, await gateway.resumeAuto(slot));
         }
 
         const streamId = channelFrom(pathname, '/operator/switch/');
@@ -144,7 +156,8 @@ export function createControlServer({ gateway, internalToken, operatorPin = null
           if (!OPERATOR_STREAM_ID.test(streamId)) {
             return sendJson(res, 400, { error: 'stream_not_allowed' });
           }
-          return sendJson(res, 200, await gateway.activate(streamId));
+          const slot = url.searchParams.get('slot') || null;
+          return sendJson(res, 200, await gateway.activate(streamId, { slot, manual: true }));
         }
       }
 
@@ -173,6 +186,15 @@ export function createControlServer({ gateway, internalToken, operatorPin = null
       const message = error instanceof Error ? error.message : String(error);
       if (/unknown channel/i.test(message)) {
         return sendJson(res, 404, { error: 'unknown_channel' });
+      }
+      if (error?.code === 'all_slots_busy') {
+        return sendJson(res, 409, { error: 'all_slots_busy', detail: message });
+      }
+      if (['slot_required', 'invalid_slot', 'invalid_account'].includes(error?.code)) {
+        return sendJson(res, 400, { error: error.code, detail: message });
+      }
+      if (error?.code === 'v2_invariant_conflict') {
+        return sendJson(res, 409, { error: 'v2_invariant_conflict', detail: message });
       }
       if (/provider slot still busy|provider slot did not clear/i.test(message)) {
         return sendJson(res, 503, { error: 'provider_slot_busy', detail: message });
