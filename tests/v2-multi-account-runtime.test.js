@@ -25,9 +25,11 @@ test('explicit V2 account config creates two private relay slots', () => {
   assert.equal(typeof runtime.accounts[0].catalogClient.account, 'function');
 });
 
-test('unset V2_IPTV_ACCOUNTS_JSON preserves the legacy single-account runtime', () => {
+test('unset V2_IPTV_ACCOUNTS_JSON exposes legacy account a while preserving the legacy gateway path', () => {
   const runtime = createRuntime(baseEnv, { fetchFn: async () => { throw new Error('not called'); } });
-  assert.equal(runtime.accounts, null);
+  assert.equal(runtime.accounts.length, 1);
+  assert.equal(runtime.accounts[0].id, 'a');
+  assert.equal(runtime.accounts[0].relayBase, 'http://v2-iptv-relay.railway.internal:8080');
 });
 
 test('multi-account runtime rejects duplicate ids, duplicate relay bases, public hosts, and more than two slots', () => {
