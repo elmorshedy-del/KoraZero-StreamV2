@@ -84,6 +84,12 @@ export function createGatewayService({
     return enabledAccounts().find((account) => account.id === id) || null;
   }
 
+  function manualHoldActive(state, now = Date.now()) {
+    if (!state || state.mode !== 'manual') return false;
+    const until = Date.parse(state.manualUntil || '');
+    return Number.isFinite(until) && until > now;
+  }
+
   function staticChannel(channelId) {
     const entry = registry.get(channelId);
     if (!entry) throw new Error(`Unknown channel: ${channelId}`);
@@ -496,7 +502,7 @@ export function createGatewayService({
     return run;
   }
 
-  async function reserveMultiSlot(streamId, requestedSlot = null) {
+  async function reserveMultiSlot(streamId, requestedSlot = null, { manual = false } = {}) {
     return withAllocationLock(async () => {
       const state = await activeMultiState();
       const already = state.live.find((item) => item.channelId === `iptv-${streamId}`);
@@ -506,12 +512,18 @@ export function createGatewayService({
       if (slotId && !accountById(slotId)) {
         throw codedError('invalid_slot', `Unknown V2 slot: ${slotId}`);
       }
+      if (slotId && !manual && manualHoldActive(slotState.get(slotId))) {
+        throw codedError('slot_manual_hold', `V2 slot ${slotId} is under manual control`);
+      }
 
       if (!slotId) {
-        const free = state.slots.find((item) =>
-          !item.channelId && !slotState.get(item.slot)?.reservedStreamId
-        );
-        if (!free) throw codedError('all_slots_busy', 'All V2 slots are busy');
+        const free = state.slots.find((item) => {
+          const candidateState = slotState.get(item.slot);
+          return !item.channelId
+            && !candidateState?.reservedStreamId
+            && (manual || !manualHoldActive(candidateState));
+        });
+        if (!free) throw codedError('all_slots_busy', 'All V2 slots are busy or manually held');
         slotId = free.slot;
       }
 
@@ -693,7 +705,7 @@ export function createGatewayService({
     if (existingPromise) return existingPromise;
 
     const request = (async () => {
-      const reservation = await reserveMultiSlot(key, slot);
+      const reservation = await reserveMultiSlot(key, slot, { manual });
       if (reservation.already) {
         const stateForSlot = slotState.get(reservation.already.slot);
         if (manual && stateForSlot) {
