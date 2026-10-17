@@ -463,6 +463,7 @@ test('relay account endpoint returns only sanitized connection status', async ()
     activeConnections: 0,
     maxConnections: 1,
     allowedOutputFormats: ['m3u8', 'ts'],
+    accountFingerprint: '2fec3d32d069',
   });
 });
 
