@@ -88,3 +88,46 @@ test('runtime config enables first-account bootstrap only when explicitly reques
   await runtime.mist.ensureHttpProtocol({ port: 8080 });
   assert.equal(calls.some((call) => call.authorize?.new_username === 'v2control'), true);
 });
+
+
+test('runtime config accepts two private V2 relay accounts without changing legacy defaults', () => {
+  const runtime = createRuntime({
+    V2_CHANNELS_JSON: '{}',
+    V2_INTERNAL_TOKEN: 'internal-secret',
+    V2_PUBLIC_HLS_BASE: 'https://stream-v2.example/hls',
+    V2_IPTV_ACCOUNTS_JSON: JSON.stringify([
+      { id: 'a', relayBase: 'http://v2-iptv-relay.railway.internal:8080' },
+      { id: 'b', relayBase: 'http://v2-iptv-relay-b.railway.internal:8080' },
+    ]),
+  }, { fetchFn: async () => { throw new Error('not called'); } });
+
+  assert.equal(runtime.accounts.length, 2);
+  assert.deepEqual(runtime.accounts.map((account) => account.id), ['a', 'b']);
+});
+
+test('runtime config rejects duplicate, public, or malformed V2 account definitions', () => {
+  const base = {
+    V2_CHANNELS_JSON: '{}',
+    V2_INTERNAL_TOKEN: 'internal-secret',
+    V2_PUBLIC_HLS_BASE: 'https://stream-v2.example/hls',
+  };
+  assert.throws(() => createRuntime({
+    ...base,
+    V2_IPTV_ACCOUNTS_JSON: JSON.stringify([
+      { id: 'a', relayBase: 'http://v2-a.railway.internal:8080' },
+      { id: 'a', relayBase: 'http://v2-b.railway.internal:8080' },
+    ]),
+  }), /unique/i);
+  assert.throws(() => createRuntime({
+    ...base,
+    V2_IPTV_ACCOUNTS_JSON: JSON.stringify([
+      { id: 'a', relayBase: 'https://example.com:8080' },
+    ]),
+  }), /private Railway/i);
+  assert.throws(() => createRuntime({
+    ...base,
+    V2_IPTV_ACCOUNTS_JSON: JSON.stringify([
+      { id: 'slot-a', relayBase: 'http://v2-a.railway.internal:8080' },
+    ]),
+  }), /lowercase letter/i);
+});
