@@ -152,14 +152,9 @@ export function createSlotScheduler({
       }
 
       if (owned && now < owned.endMs) {
-        if (current && current.matchId !== owned.matchId) {
-          const delay = await shouldDelayHandover(owned, current, now);
-          if (!delay) {
-            await gateway.activate(current.streamId, { slot: slotId });
-            ownedBySlot.set(slotId, current);
-            changed = true;
-          }
-        }
+        // A started entry is frozen until its original endAt. If a regenerated
+        // schedule drops or outranks it, keep serving it rather than preempting
+        // a live match.
         continue;
       }
 
