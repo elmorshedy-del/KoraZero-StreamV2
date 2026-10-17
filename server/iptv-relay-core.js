@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createProviderHlsTsStream, isHlsResponse } from './provider-hls-source.js';
 
 const VLC_USER_AGENT = 'VLC/3.0.18 LibVLC/3.0.18';
@@ -318,6 +319,10 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
   const portal = normalizePortal(required(env, 'V2_IPTV_PORTAL_URL'));
   const username = required(env, 'V2_IPTV_USERNAME');
   const password = required(env, 'V2_IPTV_PASSWORD');
+  const accountFingerprint = createHash('sha256')
+    .update(`${portal}|${username}`)
+    .digest('hex')
+    .slice(0, 12);
   const catalogMode = env.V2_IPTV_CATALOG_MODE === 'true';
   const catalogTtlMs = Math.max(5_000, parseNonNegativeInt(env.V2_IPTV_CATALOG_TTL_MS, DEFAULT_CATALOG_TTL_MS));
   const maxActivePulls = parseNonNegativeInt(env.V2_IPTV_MAX_ACTIVE_PULLS, 0);
@@ -404,6 +409,7 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
       activeConnections: parseNonNegativeInt(user.active_cons, 0),
       maxConnections: parseNonNegativeInt(user.max_connections, 0),
       allowedOutputFormats: Array.isArray(user.allowed_output_formats) ? user.allowed_output_formats.map((value) => cleanCatalogText(value, 20)).filter(Boolean) : [],
+      accountFingerprint,
     };
   }
 
