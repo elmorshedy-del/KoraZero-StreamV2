@@ -97,9 +97,14 @@ export function createRuntime(env = process.env, { fetchFn = globalThis.fetch } 
       relayBase,
       catalogClient: createIptvCatalogClient({ baseUrl: relayBase, fetchFn }),
     }))
-    : null;
-  const relayBase = accounts?.[0]?.relayBase || legacyRelayBase;
-  const catalogClient = accounts?.[0]?.catalogClient || createIptvCatalogClient({ baseUrl: relayBase, fetchFn });
+    : [Object.freeze({
+      id: 'a',
+      relayBase: legacyRelayBase,
+      catalogClient: createIptvCatalogClient({ baseUrl: legacyRelayBase, fetchFn }),
+    })];
+  const relayBase = accounts[0].relayBase;
+  const catalogClient = accounts[0].catalogClient;
+  const gatewayAccounts = accountConfigs ? accounts : null;
 
   const mist = createMistApi({
     endpoint: mistEndpoint,
@@ -125,7 +130,7 @@ export function createRuntime(env = process.env, { fetchFn = globalThis.fetch } 
     sourceSupervisor,
     catalogClient,
     relayBase,
-    accounts,
+    accounts: gatewayAccounts,
     fetchFn,
   });
 
@@ -137,6 +142,6 @@ export function createRuntime(env = process.env, { fetchFn = globalThis.fetch } 
     mist,
     sourceSupervisor,
     gateway,
-    accounts: accounts ? Object.freeze([...accounts]) : null,
+    accounts: Object.freeze([...accounts]),
   });
 }
