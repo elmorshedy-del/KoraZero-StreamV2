@@ -699,7 +699,7 @@ export function createGatewayService({
         const stateForSlot = slotState.get(reservation.already.slot);
         if (manual && stateForSlot) {
           stateForSlot.mode = 'manual';
-          stateForSlot.manualUntil = manualUntil || manualUntilResolver?.(slotId, Date.now()) || new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+          stateForSlot.manualUntil = manualUntil || manualUntilResolver?.(reservation.already.slot, Date.now()) || new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
         }
         return descriptor(reservation.already.channelId, {
           streamId: key,
@@ -788,7 +788,7 @@ export function createGatewayService({
         state.reservedStreamId = null;
         if (manual) {
           state.mode = 'manual';
-          state.manualUntil = manualUntil || manualUntilResolver?.(slotId, Date.now()) || new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+          state.manualUntil = manualUntil || manualUntilResolver?.(account.id, Date.now()) || new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
         }
       }
       return { stopped: true, slot: 'all', channels };
