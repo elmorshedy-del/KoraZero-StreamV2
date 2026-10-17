@@ -536,7 +536,7 @@ export function createGatewayService({
 
   async function stopOwnedMultiSlot(slotId, attempt = null) {
     const state = await activeMultiState();
-    const owned = state.live.filter((item) => item.slot === slotId);
+    const owned = state.configured.filter((item) => item.slot === slotId);
     const channels = [];
     for (const item of owned) {
       channels.push(item.channelId);
