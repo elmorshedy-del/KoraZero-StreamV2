@@ -17,6 +17,31 @@ export function createApp(env = process.env, { fetchFn = globalThis.fetch, stati
     const hlsProtocol = await runtime.mist.ensureHlsProtocol();
     // 10 = stream + client token. Exclude reverse-proxy hop IP from viewer identity.
     const viewerSessionMode = await runtime.mist.ensureViewerSessionMode({ mode: 10 });
+
+    let accountGuard = { configured: runtime.accounts?.length || 1, enabled: runtime.accounts?.length || 1 };
+    if (runtime.accounts?.length > 1) {
+      try {
+        const statuses = await Promise.all(runtime.accounts.map(async (account) => ({
+          id: account.id,
+          status: await account.catalogClient.account(),
+        })));
+        const fingerprints = statuses.map((item) => item.status.accountFingerprint).filter(Boolean);
+        const verifiedDistinct = fingerprints.length === statuses.length
+          && new Set(fingerprints).size === statuses.length;
+        if (!verifiedDistinct) {
+          const keep = runtime.accounts[0].id;
+          runtime.gateway.setEnabledAccounts([keep]);
+          accountGuard = { configured: runtime.accounts.length, enabled: 1, fallback: keep };
+          console.error('V2 account fingerprint guard forced single-slot mode');
+        }
+      } catch (error) {
+        const keep = runtime.accounts[0].id;
+        runtime.gateway.setEnabledAccounts([keep]);
+        accountGuard = { configured: runtime.accounts.length, enabled: 1, fallback: keep };
+        console.error('V2 account verification failed; forced single-slot mode', error);
+      }
+    }
+
     const emergency3645Only = env.V2_EMERGENCY_3645_ONLY === 'true';
     if (emergency3645Only) {
       const configured = await runtime.mist.listConfiguredStreams();
@@ -43,6 +68,7 @@ export function createApp(env = process.env, { fetchFn = globalThis.fetch, stati
       httpProtocol,
       hlsProtocol,
       viewerSessionMode,
+      accountGuard,
       channels: runtime.registry.entries().map((entry) => entry.channelId),
       activateChannel,
     };

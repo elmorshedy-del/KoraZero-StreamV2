@@ -2,55 +2,127 @@
 
 ## Browser boundary
 
-The browser receives exactly one playback descriptor for a logical channel:
+The public V2 media URL remains:
+
+```text
+/hls/iptv-<digits>/index.m3u8
+```
+
+A slot/account identifier is never added to that URL. The account that supplies a channel is a server-side implementation detail.
+
+The browser never receives, reconstructs, signs, retries, or connects to a provider URL. Provider credentials, exact upstream URLs, origin selection, and account ownership stay server-side.
+
+## Active-state contract
+
+`GET /api/active` is public and read-only. In multi-slot mode it returns an additive shape:
 
 ```json
 {
-  "channelId": "bein-1",
-  "manifestUrl": "https://stream-v2.example/hls/bein-1/index.m3u8"
+  "capacity": 2,
+  "slots": [
+    {
+      "slot": "a",
+      "channelId": "iptv-3645",
+      "streamId": "3645",
+      "inputs": 1,
+      "viewers": 40,
+      "mode": "auto",
+      "manualUntil": null
+    },
+    {
+      "slot": "b",
+      "channelId": null,
+      "mode": "auto",
+      "manualUntil": null
+    }
+  ],
+  "live": [
+    {
+      "channelId": "iptv-3645",
+      "streamId": "3645",
+      "slot": "a",
+      "inputs": 1,
+      "viewers": 40
+    }
+  ],
+  "active": {
+    "channelId": "iptv-3645",
+    "streamId": "3645",
+    "slot": "a"
+  },
+  "conflict": false
 }
 ```
 
-The public playback shape is:
+Legacy readers may continue to use `active`. Two healthy slots are **not** a conflict.
+
+`conflict:true` means an invariant is broken, for example:
+
+- more live `iptv-*` inputs than configured capacity;
+- more than one live input owned by one relay/account;
+- a live `iptv-*` input whose Mist source does not belong to any configured relay.
+
+Slot ownership is derived from the Mist stream source host so it survives controller restarts.
+
+## Account configuration
+
+Multi-slot mode is opt-in with:
 
 ```text
-/hls/{stream}/index.m3u8
+V2_IPTV_ACCOUNTS_JSON=[
+  {"id":"a","relayBase":"http://v2-iptv-relay.railway.internal:8080"},
+  {"id":"b","relayBase":"http://v2-iptv-relay-b.railway.internal:8080"}
+]
 ```
 
-The **browser never receives, reconstructs, signs, retries, or connects to a provider URL**. Provider credentials, exact upstream URLs, origin selection, and source failover are exclusively server-side concerns.
+When this variable is unset, the existing `V2_IPTV_RELAY_BASE` single-slot behavior remains authoritative.
 
-## Gateway responsibility
+Each relay `/account` response exposes only a 12-hex `accountFingerprint` derived from the normalized portal plus username. It does not expose the portal, username, password, or provider media URL. If two configured relays have the same fingerprint, or identity cannot be verified, bootstrap falls back to slot A only.
 
-The gateway owns the upstream session for an active channel and publishes a KoraZero-owned HLS presentation downstream. The initial implementation target is MistServer because it supports HTTP MPEG-TS input and HLS output.
+## Operator API
 
-V2 source configuration is deliberately not copied from MorshLive. A later control-plane subproject will map logical channel IDs to authorized upstream inputs and configure the gateway.
+All `/operator/*` routes require the existing operator PIN.
 
-## Player responsibility
+```text
+GET  /operator/active
+GET  /operator/catalog?account=a|b
+POST /operator/switch/<streamId>?slot=a|b
+POST /operator/off?slot=a|b
+POST /operator/auto?slot=a|b
+```
 
-The player consumes only the HLS manifest URL. It does not know:
+Rules:
 
-- provider credentials;
-- provider stream IDs;
-- provider category names;
-- exact upstream hosts;
-- alternate provider feeds;
-- gateway implementation details.
+- A switch with an explicit slot replaces only that slot.
+- A switch without a slot uses a free slot; if all slots are busy it returns HTTP 409 `all_slots_busy` and never evicts automatically.
+- If the requested channel is already live on any slot, it is reused and no second provider pull is opened.
+- With two accounts configured, `/operator/off` requires `?slot=`; stopping every slot is never an implicit operator action.
+- Manual switch/off puts only that slot into manual mode. `/operator/auto?slot=` resumes schedule control.
+- Provider-slot waits and superseding queues are per slot, so work on slot A does not abort work on slot B.
+
+## Automatic scheduler
+
+Automation is disabled unless:
+
+```text
+V2_AUTO_SCHEDULE=true
+```
+
+The scheduler reads `V2_SLOT_SCHEDULE_URL` (default `https://korazero.com/assets/data/v2-slot-schedule.json`) every 60 seconds.
+
+Fail-closed behavior:
+
+- schedule fetch/parse failure changes nothing;
+- controller conflict changes nothing;
+- a started schedule entry is frozen until its original `endAt`, even if a newer schedule drops it;
+- manual slots are skipped until their hold expires;
+- handover waits for the previous match to stop being live, but never later than the next match kickoff.
+
+Unset `V2_AUTO_SCHEDULE` to return to remote-only control.
 
 ## Security boundary
 
-- MistServer management port `4242` is private/internal only.
-- HLS HTTP output is the only media surface intended for browser access in the first gateway prototype.
-- No production provider URL or credential is committed to this repository.
-- Deployment secrets are injected outside git.
-
-## Future control plane
-
-The next gateway milestone will introduce a server-side API with an interface similar to:
-
-```text
-POST /internal/channels/{channelId}/activate
-GET  /internal/channels/{channelId}/status
-POST /internal/channels/{channelId}/stop
-```
-
-Those endpoints will manage source activation and gateway state. They are not browser APIs and are not implemented in milestone 1.
+- MistServer management port `4242` stays private/internal only.
+- Relay bases in multi-slot config must be private Railway hosts with explicit ports (localhost is accepted only for tests).
+- No production provider URL or credential belongs in git, logs, schedule files, public API responses, or browser code.
+- The existing IPTV Lab/Xtream path is outside this contract and is unchanged.
