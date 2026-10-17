@@ -64,6 +64,7 @@ export function createGatewayService({
     },
   ]));
   let allocationTail = Promise.resolve();
+  let manualUntilResolver = null;
   const inFlightByStream = new Map();
 
   // Legacy single-account state. This remains the only path when
@@ -698,7 +699,7 @@ export function createGatewayService({
         const stateForSlot = slotState.get(reservation.already.slot);
         if (manual && stateForSlot) {
           stateForSlot.mode = 'manual';
-          stateForSlot.manualUntil = manualUntil || new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+          stateForSlot.manualUntil = manualUntil || manualUntilResolver?.(slotId, Date.now()) || new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
         }
         return descriptor(reservation.already.channelId, {
           streamId: key,
@@ -713,7 +714,7 @@ export function createGatewayService({
       if (!stateForSlot) throw codedError('invalid_slot', `Unknown V2 slot: ${slotId}`);
       if (manual) {
         stateForSlot.mode = 'manual';
-        stateForSlot.manualUntil = manualUntil || new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+        stateForSlot.manualUntil = manualUntil || manualUntilResolver?.(slotId, Date.now()) || new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
       }
 
       const generation = ++stateForSlot.generation;
@@ -787,7 +788,7 @@ export function createGatewayService({
         state.reservedStreamId = null;
         if (manual) {
           state.mode = 'manual';
-          state.manualUntil = manualUntil || new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+          state.manualUntil = manualUntil || manualUntilResolver?.(slotId, Date.now()) || new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
         }
       }
       return { stopped: true, slot: 'all', channels };
@@ -797,7 +798,7 @@ export function createGatewayService({
     const state = slotState.get(slotId);
     if (manual && state) {
       state.mode = 'manual';
-      state.manualUntil = manualUntil || new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+      state.manualUntil = manualUntil || manualUntilResolver?.(slotId, Date.now()) || new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
     }
     const channels = await stopOwnedMultiSlot(slotId);
     return { stopped: true, slot: slotId, channels };
@@ -877,6 +878,10 @@ export function createGatewayService({
       await mist.addStream(channelId, entry.source, { always_on: true });
       sourceSupervisor?.arm(channelId);
       return staticPlayback(channelId);
+    },
+
+    setManualUntilResolver(resolver) {
+      manualUntilResolver = typeof resolver === 'function' ? resolver : null;
     },
 
     async resumeAuto(slot) {
