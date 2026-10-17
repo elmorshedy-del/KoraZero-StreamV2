@@ -196,6 +196,9 @@ export function createControlServer({ gateway, internalToken, operatorPin = null
       if (error?.code === 'all_slots_busy') {
         return sendJson(res, 409, { error: 'all_slots_busy', detail: message });
       }
+      if (error?.code === 'slot_manual_hold') {
+        return sendJson(res, 409, { error: 'slot_manual_hold', detail: message });
+      }
       if (error?.code === 'v2_invariant_conflict') {
         return sendJson(res, 409, { error: 'v2_invariant_conflict', detail: message });
       }
