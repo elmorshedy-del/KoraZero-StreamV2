@@ -457,13 +457,18 @@ test('relay account endpoint returns only sanitized connection status', async ()
   });
 
   const response = await relay.handle({ method: 'GET', pathname: '/account' });
-  assert.deepEqual(await response.json(), {
+  const body = await response.json();
+  assert.deepEqual(body, {
     auth: 1,
     status: 'Active',
     activeConnections: 0,
     maxConnections: 1,
     allowedOutputFormats: ['m3u8', 'ts'],
+    accountFingerprint: '2fec3d32d069',
   });
+  assert.equal(JSON.stringify(body).includes('user name'), false);
+  assert.equal(JSON.stringify(body).includes('p@ss/word'), false);
+  assert.equal(JSON.stringify(body).includes('provider.example'), false);
 });
 
 test('relay can enforce one total provider pull while catalog testing', async () => {
