@@ -6,6 +6,7 @@ on:
       - cursor/v2-relay-recovery-f540
       - cursor/v2-two-slot-controller-isolated-f540
       - cursor/v2-account-fingerprint-f540
+      - cursor/v2-release-candidate-f540
   pull_request:
     branches:
       - feature/gateway-control
