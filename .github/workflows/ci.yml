@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - cursor/v2-relay-recovery-f540
+      - cursor/v2-two-slot-controller-isolated-f540
+      - cursor/v2-account-fingerprint-f540
+      - cursor/v2-release-candidate-f540
+  pull_request:
+    branches:
+      - feature/gateway-control
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install --no-audit --no-fund
+      - run: npm test
+      - run: npm run build
+      - run: npm run audit:donor

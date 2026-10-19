@@ -457,13 +457,18 @@ test('relay account endpoint returns only sanitized connection status', async ()
   });
 
   const response = await relay.handle({ method: 'GET', pathname: '/account' });
-  assert.deepEqual(await response.json(), {
+  const body = await response.json();
+  assert.deepEqual(body, {
     auth: 1,
     status: 'Active',
     activeConnections: 0,
     maxConnections: 1,
     allowedOutputFormats: ['m3u8', 'ts'],
+    accountFingerprint: '2fec3d32d069',
   });
+  assert.equal(JSON.stringify(body).includes('user name'), false);
+  assert.equal(JSON.stringify(body).includes('p@ss/word'), false);
+  assert.equal(JSON.stringify(body).includes('provider.example'), false);
 });
 
 test('relay can enforce one total provider pull while catalog testing', async () => {
@@ -668,4 +673,95 @@ test('HLS-backed relay keeps fetching media while provider account would still r
   assert.equal(stats.lastError, null);
   assert.equal(accountReads, 0);
   assert.equal(mediaPlaylistReads, 1);
+});
+
+
+test('HLS-backed relay keeps the Mist body open across a provider segment 404', async () => {
+  const firstSegment = concat(tsPacket(360, 0), tsPacket(360, 1));
+  const thirdSegment = concat(tsPacket(362, 0), tsPacket(362, 1));
+  const initialPlaylist = [
+    '#EXTM3U',
+    '#EXT-X-TARGETDURATION:1',
+    '#EXT-X-MEDIA-SEQUENCE:1',
+    '#EXTINF:1.0,',
+    'segment-1.ts',
+    '#EXTINF:1.0,',
+    'segment-2.ts',
+    '',
+  ].join('\n');
+  const refreshedPlaylist = [
+    '#EXTM3U',
+    '#EXT-X-TARGETDURATION:1',
+    '#EXT-X-MEDIA-SEQUENCE:3',
+    '#EXTINF:1.0,',
+    'segment-3.ts',
+    '#EXT-X-ENDLIST',
+    '',
+  ].join('\n');
+
+  let releaseRefresh;
+  const refreshGate = new Promise((resolve) => { releaseRefresh = resolve; });
+  const events = [];
+
+  const relay = createIptvRelay(env, {
+    idleKeepaliveMs: 5,
+    log: (event) => events.push(event),
+    fetchFn: async (url, options = {}) => {
+      const value = String(url);
+      if (value.endsWith('/3974.ts') && options.headers?.Range === 'bytes=0-') {
+        return new Response(initialPlaylist, {
+          status: 206,
+          headers: { 'content-type': 'application/vnd.apple.mpegurl' },
+        });
+      }
+      if (value.endsWith('/segment-1.ts')) {
+        return new Response(firstSegment, {
+          status: 200,
+          headers: { 'content-type': 'video/mp2t' },
+        });
+      }
+      if (value.endsWith('/segment-2.ts')) return new Response('', { status: 404 });
+      if (value.endsWith('/3974.ts')) {
+        await refreshGate;
+        return new Response(refreshedPlaylist, {
+          status: 200,
+          headers: { 'content-type': 'application/vnd.apple.mpegurl' },
+        });
+      }
+      if (value.endsWith('/segment-3.ts')) {
+        return new Response(thirdSegment, {
+          status: 200,
+          headers: { 'content-type': 'video/mp2t' },
+        });
+      }
+      throw new Error(`unexpected URL: ${value}`);
+    },
+  });
+
+  const response = await relay.handle({ method: 'GET', pathname: '/live/3974.ts' });
+  const reader = response.body.getReader();
+
+  const first = await reader.read();
+  assert.equal(first.done, false);
+  assert.deepEqual(first.value, firstSegment);
+
+  const heartbeat = await reader.read();
+  assert.equal(heartbeat.done, false);
+  assert.ok(heartbeat.value.length > 25_600);
+  assert.equal(heartbeat.value.length % 188, 0);
+
+  releaseRefresh();
+
+  const third = await reader.read();
+  assert.equal(third.done, false);
+  assert.deepEqual(third.value, thirdSegment);
+
+  const done = await reader.read();
+  assert.equal(done.done, true);
+
+  const stats = relay.stats().streams['3974'];
+  assert.equal(stats.hlsSegmentSkips, 1);
+  assert.ok(stats.keepaliveBursts >= 1);
+  assert.ok(events.some((event) => event.event === 'provider-hls-recovery' && event.kind === 'segment-skip'));
+  assert.equal(relay.stats().activePulls, 0);
 });

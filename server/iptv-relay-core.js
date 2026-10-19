@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createProviderHlsTsStream, isHlsResponse } from './provider-hls-source.js';
 
 const VLC_USER_AGENT = 'VLC/3.0.18 LibVLC/3.0.18';
@@ -150,6 +151,10 @@ function createStreamStats() {
     realBytes: 0,
     keepaliveBursts: 0,
     keepaliveBytes: 0,
+    hlsSegmentRetries: 0,
+    hlsSegmentSkips: 0,
+    hlsPlaylistRetries: 0,
+    hlsCatchUps: 0,
     transportMode: null,
     upstreamStatus: null,
     upstreamContentType: null,
@@ -394,12 +399,17 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
   async function accountStatus() {
     const payload = await fetchProviderJson();
     const user = payload?.user_info || {};
+    const accountFingerprint = createHash('sha256')
+      .update(`${portal}|${username}`)
+      .digest('hex')
+      .slice(0, 12);
     return {
       auth: Number(user.auth || 0),
       status: cleanCatalogText(user.status, 40),
       activeConnections: parseNonNegativeInt(user.active_cons, 0),
       maxConnections: parseNonNegativeInt(user.max_connections, 0),
       allowedOutputFormats: Array.isArray(user.allowed_output_formats) ? user.allowed_output_formats.map((value) => cleanCatalogText(value, 20)).filter(Boolean) : [],
+      accountFingerprint,
     };
   }
 
@@ -423,6 +433,10 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
     realBytes: 0,
     keepaliveBursts: 0,
     keepaliveBytes: 0,
+    hlsSegmentRetries: 0,
+    hlsSegmentSkips: 0,
+    hlsPlaylistRetries: 0,
+    hlsCatchUps: 0,
   };
 
   function snapshot() {
@@ -559,6 +573,22 @@ export function createIptvRelay(env = process.env, { fetchFn = globalThis.fetch,
           fetchFn,
           signal: controller.signal,
           userAgent: VLC_USER_AGENT,
+          onRecovery(meta) {
+            if (meta.kind === 'segment-retry') {
+              stats.hlsSegmentRetries += 1;
+              currentStreamStats.hlsSegmentRetries += 1;
+            } else if (meta.kind === 'segment-skip') {
+              stats.hlsSegmentSkips += 1;
+              currentStreamStats.hlsSegmentSkips += 1;
+            } else if (meta.kind === 'playlist-retry') {
+              stats.hlsPlaylistRetries += 1;
+              currentStreamStats.hlsPlaylistRetries += 1;
+            } else if (meta.kind === 'catch-up') {
+              stats.hlsCatchUps += 1;
+              currentStreamStats.hlsCatchUps += 1;
+            }
+            log({ event: 'provider-hls-recovery', streamId: requestedStreamId, ...meta });
+          },
           onPlaylist(meta) {
             currentStreamStats.playlistFetches += 1;
             log({ event: 'hls-playlist', streamId: requestedStreamId, ...meta });
