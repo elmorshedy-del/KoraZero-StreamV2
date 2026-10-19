@@ -4,6 +4,7 @@ import {
   runConfiguredHlsSmokeTest,
   runConfiguredRecoverySmokeTest,
 } from './hls-smoke.js';
+import { createSlotScheduler } from './slot-scheduler.js';
 
 const app = createApp();
 const smokeChannel = String(process.env.V2_SMOKE_TEST_CHANNEL || '').trim() || null;
@@ -28,6 +29,27 @@ if (recovery) {
   console.log(`V2 recovery smoke passed channel=${recovery.channelId} reconnectPulls=${recovery.reconnectPulls} upstreamPulls=${recovery.upstreamPulls} totalPulls=${recovery.totalPulls} timings=${JSON.stringify(recovery.timings)}`);
 }
 
+const slotScheduler = process.env.V2_AUTO_SCHEDULE === 'true'
+  ? createSlotScheduler({
+    gateway: app.gateway,
+    scheduleUrl: String(
+      process.env.V2_SLOT_SCHEDULE_URL
+        || 'https://korazero.com/assets/data/v2-slot-schedule.json',
+    ).trim(),
+    todayUrl: String(
+      process.env.V2_TODAY_URL
+        || 'https://korazero.com/assets/data/today.json',
+    ).trim(),
+    log(event) {
+      console.log(`V2 slot scheduler ${JSON.stringify(event)}`);
+    },
+  })
+  : null;
+
 app.server.listen(app.port, '0.0.0.0', () => {
   console.log(`KoraZero Stream V2 control/player service listening on ${app.port}`);
+  if (slotScheduler) {
+    slotScheduler.start();
+    console.log('V2 automatic slot schedule enabled');
+  }
 });
