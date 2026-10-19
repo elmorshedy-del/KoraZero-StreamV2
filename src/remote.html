@@ -7,35 +7,32 @@
   <title>V2 Remote</title>
   <style>
     :root{color-scheme:dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#070b12;color:#f4f7fb}
-    *{box-sizing:border-box}
-    body{margin:0;min-height:100vh;background:#070b12}
-    main{width:min(680px,100%);margin:0 auto;padding:calc(20px + env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom))}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:#070b12}
+    main{width:min(760px,100%);margin:0 auto;padding:calc(20px + env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom))}
     h1{font-size:28px;margin:0 0 4px}.sub{color:#93a2b8;margin:0 0 18px}
     .card{background:#0e1623;border:1px solid #243247;border-radius:18px;padding:16px;margin-bottom:14px}
-    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-    .grow{flex:1;min-width:0}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.grow{flex:1;min-width:0}
     label{display:block;font-size:13px;color:#93a2b8;margin-bottom:7px}
     input{width:100%;min-height:48px;border-radius:12px;border:1px solid #2a3a52;background:#09101a;color:#fff;padding:0 13px;font-size:16px}
-    button{min-height:50px;border-radius:13px;border:1px solid #2b3a4f;background:#151f2e;color:#f5f7fb;font-weight:750;font-size:16px;padding:0 14px;cursor:pointer}
+    button{min-height:48px;border-radius:13px;border:1px solid #2b3a4f;background:#151f2e;color:#f5f7fb;font-weight:750;font-size:15px;padding:0 14px;cursor:pointer}
     button.primary{background:#18e29a;color:#04110c;border-color:#18e29a}
     button.danger{background:#2a131a;color:#ffb0bd;border-color:#6a2c3b}
     button:disabled{opacity:.45;cursor:not-allowed}
-    .status{display:flex;align-items:center;gap:10px;min-height:52px}
-    .dot{width:11px;height:11px;border-radius:50%;background:#64748b;flex:none}.dot.on{background:#18e29a}.dot.busy{background:#fbbf24}.dot.err{background:#fb7185}
-    .active-name{font-weight:800;font-size:18px}.active-meta{color:#93a2b8;font-size:13px;margin-top:2px}
-    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-    .ch{display:flex;flex-direction:column;justify-content:center;align-items:flex-start;padding:12px;min-height:74px}
-    .ch strong{font-size:16px}.ch span{color:#8fa0b7;font-size:12px;margin-top:3px}
-    .ch.active{border-color:#18e29a;box-shadow:inset 0 0 0 1px #18e29a;background:#0e2b21}
-    .msg{font-size:13px;line-height:1.45;color:#93a2b8;margin-top:10px;min-height:20px}
-    .footer{font-size:12px;color:#68788f;text-align:center;margin-top:10px}
-    @media(max-width:420px){.grid{grid-template-columns:1fr 1fr}.ch{min-height:70px;padding:10px}h1{font-size:25px}}
+    .slot-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .slot{background:#09111c;border:1px solid #223149;border-radius:15px;padding:13px}.slot.on{border-color:#18e29a}
+    .slot-title{display:flex;align-items:center;gap:8px;font-weight:850}.dot{width:10px;height:10px;border-radius:50%;background:#64748b}.dot.on{background:#18e29a}.dot.err{background:#fb7185}
+    .slot-name{font-size:17px;font-weight:800;margin-top:10px}.slot-meta{font-size:12px;color:#93a2b8;margin-top:4px;min-height:34px}.slot-actions{display:flex;gap:8px;margin-top:12px}.slot-actions button{flex:1;min-height:42px;font-size:13px}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.ch{display:flex;flex-direction:column;justify-content:center;align-items:flex-start;padding:12px;min-height:72px}
+    .ch strong{font-size:15px}.ch span{color:#8fa0b7;font-size:12px;margin-top:3px}
+    .chooser{display:none;margin-top:12px;border-top:1px solid #26354a;padding-top:12px}.chooser.show{display:block}.chooser-title{font-weight:800;margin-bottom:8px}.chooser-buttons{display:flex;gap:8px}.chooser-buttons button{flex:1}
+    .msg{font-size:13px;line-height:1.45;color:#93a2b8;margin-top:10px;min-height:20px}.footer{font-size:12px;color:#68788f;text-align:center;margin-top:10px}
+    @media(max-width:540px){.slot-grid,.grid{grid-template-columns:1fr}.slot-actions,.chooser-buttons{flex-wrap:wrap}.slot-actions button,.chooser-buttons button{min-width:42%}}
   </style>
 </head>
 <body>
 <main>
   <h1>V2 Remote</h1>
-  <p class="sub">One tap changes the single V2 ingest. No website, Mist, or Railway redeploy.</p>
+  <p class="sub">Control V2 slots independently. Manual choices pause automation only for that slot.</p>
 
   <section class="card">
     <div class="row">
@@ -49,19 +46,16 @@
   </section>
 
   <section class="card">
-    <div class="status">
-      <span class="dot" id="dot"></span>
-      <div class="grow">
-        <div class="active-name" id="activeName">Checking…</div>
-        <div class="active-meta" id="activeMeta"></div>
-      </div>
-      <button class="danger" id="off" type="button">Off</button>
-    </div>
-    <div class="msg" id="switchMsg">Select a channel below. The button returns only after HLS verification succeeds.</div>
+    <div class="slot-grid" id="slots"></div>
+    <div class="msg" id="switchMsg">Choose a channel below, then choose the slot that should carry it.</div>
   </section>
 
   <section class="card">
     <div class="grid" id="grid"></div>
+    <div class="chooser" id="chooser">
+      <div class="chooser-title" id="chooserTitle"></div>
+      <div class="chooser-buttons" id="chooserButtons"></div>
+    </div>
   </section>
 
   <div class="footer">KoraZero V2 · operator-only · V1/Lab is not part of this control path</div>
@@ -69,130 +63,188 @@
 <script>
 (() => {
   const channels = [
-    ["3645","beIN Sports 1"],
-    ["3644","beIN Sports 2"],
-    ["3653","beIN Sports 3"],
-    ["3652","beIN Sports 4"],
-    ["3651","beIN Sports 5"],
-    ["89778","Al Kass 1"],
-    ["89779","Al Kass 2"],
-    ["677","ON Sport HD"],
-    ["244603","Shasha Sport 2"],
+    ["3645","beIN Sports 1"],["3644","beIN Sports 2"],["3653","beIN Sports 3"],
+    ["3652","beIN Sports 4"],["3651","beIN Sports 5"],["89778","Al Kass 1"],
+    ["89779","Al Kass 2"],["677","ON Sport HD"],["244603","Shasha Sport 2"],
   ];
   const pin = document.getElementById("pin");
   const save = document.getElementById("save");
-  const off = document.getElementById("off");
+  const slotsEl = document.getElementById("slots");
   const grid = document.getElementById("grid");
-  const dot = document.getElementById("dot");
-  const activeName = document.getElementById("activeName");
-  const activeMeta = document.getElementById("activeMeta");
+  const chooser = document.getElementById("chooser");
+  const chooserTitle = document.getElementById("chooserTitle");
+  const chooserButtons = document.getElementById("chooserButtons");
   const authMsg = document.getElementById("authMsg");
   const switchMsg = document.getElementById("switchMsg");
   let busy = false;
-  let activeStream = null;
+  let state = { capacity: 1, slots: [], live: [], conflict: false };
+  let pendingChannel = null;
 
-  const saved = localStorage.getItem("kz_v2_operator_pin") || "";
-  pin.value = saved;
+  pin.value = localStorage.getItem("kz_v2_operator_pin") || "";
 
-  function headers() {
-    return { "x-operator-pin": pin.value.trim() };
-  }
-  function setBusy(value, message="") {
-    busy = value;
-    grid.querySelectorAll("button").forEach((b) => b.disabled = value);
-    off.disabled = value;
-    dot.className = "dot" + (value ? " busy" : activeStream ? " on" : "");
-    if (message) switchMsg.textContent = message;
-  }
-  function renderButtons() {
-    grid.replaceChildren();
-    channels.forEach(([id,label]) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "ch" + (activeStream === id ? " active" : "");
-      b.dataset.stream = id;
-      const strong = document.createElement("strong");
-      strong.textContent = label;
-      const span = document.createElement("span");
-      span.textContent = "iptv-" + id;
-      b.append(strong, span);
-      b.addEventListener("click", () => switchTo(id, label));
-      grid.appendChild(b);
-    });
-  }
+  function headers() { return { "x-operator-pin": pin.value.trim() }; }
   async function api(path, options={}) {
     const response = await fetch(path, { cache:"no-store", ...options, headers:{...headers(), ...(options.headers||{})} });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.detail || body.error || ("HTTP " + response.status));
     return body;
   }
+  function labelFor(streamId) {
+    return channels.find(([id]) => id === String(streamId))?.[1] || (streamId ? "iptv-" + streamId : "Off");
+  }
+  function setBusy(value, message="") {
+    busy = value;
+    document.querySelectorAll("button").forEach((button) => {
+      if (button.id !== "save") button.disabled = value;
+    });
+    if (message) switchMsg.textContent = message;
+  }
+  function normalizedSlots() {
+    if (Array.isArray(state.slots) && state.slots.length) return state.slots;
+    const active = state.active || null;
+    return [{
+      slot: "a",
+      channelId: active?.channelId || null,
+      streamId: active?.streamId || null,
+      inputs: active?.inputs || 0,
+      viewers: active?.viewers || 0,
+      mode: "manual",
+      manualUntil: null,
+    }];
+  }
+  function renderSlots() {
+    slotsEl.replaceChildren();
+    for (const slot of normalizedSlots()) {
+      const card = document.createElement("div");
+      card.className = "slot" + (slot.channelId ? " on" : "");
+      const title = document.createElement("div");
+      title.className = "slot-title";
+      const dot = document.createElement("span");
+      dot.className = "dot" + (state.conflict ? " err" : slot.channelId ? " on" : "");
+      const text = document.createElement("span");
+      text.textContent = "Slot " + String(slot.slot || "a").toUpperCase();
+      title.append(dot, text);
+
+      const name = document.createElement("div");
+      name.className = "slot-name";
+      name.textContent = labelFor(slot.streamId);
+      const meta = document.createElement("div");
+      meta.className = "slot-meta";
+      meta.textContent = slot.channelId
+        ? slot.channelId + " · inputs " + (slot.inputs || 0) + " · viewers " + (slot.viewers || 0) + " · " + (slot.mode || "auto")
+        : "No active channel · " + (slot.mode || "auto");
+
+      const actions = document.createElement("div");
+      actions.className = "slot-actions";
+      const off = document.createElement("button");
+      off.type = "button";
+      off.className = "danger";
+      off.textContent = "Off";
+      off.addEventListener("click", () => turnOff(slot.slot));
+      actions.appendChild(off);
+      if (slot.mode === "manual") {
+        const auto = document.createElement("button");
+        auto.type = "button";
+        auto.textContent = "Resume Auto";
+        auto.addEventListener("click", () => resumeAuto(slot.slot));
+        actions.appendChild(auto);
+      }
+      card.append(title, name, meta, actions);
+      slotsEl.appendChild(card);
+    }
+  }
+  function renderChannels() {
+    grid.replaceChildren();
+    channels.forEach(([id,label]) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "ch";
+      const strong = document.createElement("strong");
+      strong.textContent = label;
+      const span = document.createElement("span");
+      span.textContent = "iptv-" + id;
+      button.append(strong, span);
+      button.addEventListener("click", () => chooseChannel(id, label));
+      grid.appendChild(button);
+    });
+  }
+  function renderChooser() {
+    chooserButtons.replaceChildren();
+    if (!pendingChannel) {
+      chooser.classList.remove("show");
+      return;
+    }
+    chooser.classList.add("show");
+    chooserTitle.textContent = "Play " + pendingChannel.label + " on:";
+    const slots = normalizedSlots();
+    for (const slot of slots) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = slot.channelId ? "" : "primary";
+      button.textContent = "Slot " + String(slot.slot).toUpperCase() + (slot.channelId ? " · replace " + labelFor(slot.streamId) : " · free");
+      button.addEventListener("click", () => switchTo(pendingChannel.id, pendingChannel.label, slot.slot));
+      chooserButtons.appendChild(button);
+    }
+  }
+  function chooseChannel(id, label) {
+    pendingChannel = { id, label };
+    renderChooser();
+  }
   async function refreshActive() {
     if (!pin.value.trim()) {
-      activeName.textContent = "Enter operator PIN";
-      activeMeta.textContent = "";
-      dot.className = "dot";
+      authMsg.textContent = "Enter the operator PIN.";
+      state = { capacity: 1, slots: [], live: [], conflict: false };
+      renderSlots();
       return;
     }
     try {
-      const state = await api("/operator/active");
-      if (state.conflict) {
-        activeStream = null;
-        activeName.textContent = "Conflict: multiple V2 inputs";
-        activeMeta.textContent = (state.live || []).map(x => x.channelId).join(", ");
-        dot.className = "dot err";
-      } else if (state.active) {
-        activeStream = String(state.active.streamId);
-        const label = channels.find(([id]) => id === activeStream)?.[1] || state.active.channelId;
-        activeName.textContent = label;
-        activeMeta.textContent = state.active.channelId + " · inputs " + state.active.inputs + " · viewers " + state.active.viewers;
-        dot.className = "dot on";
-      } else {
-        activeStream = null;
-        activeName.textContent = "V2 is Off";
-        activeMeta.textContent = "No active iptv-* input in Mist";
-        dot.className = "dot";
-      }
-      authMsg.textContent = "Connected.";
-      renderButtons();
+      state = await api("/operator/active");
+      authMsg.textContent = state.conflict ? "Connected, but V2 reports an ownership conflict." : "Connected.";
+      renderSlots();
+      renderChooser();
     } catch (error) {
-      activeStream = null;
-      activeName.textContent = "Remote locked";
-      activeMeta.textContent = "";
-      dot.className = "dot err";
       authMsg.textContent = error.message === "unauthorized" ? "Wrong operator PIN." : error.message;
-      renderButtons();
     }
   }
-  async function switchTo(id, label) {
+  async function switchTo(id, label, slot) {
     if (busy) return;
-    if (!pin.value.trim()) { authMsg.textContent = "Enter the operator PIN first."; pin.focus(); return; }
-    setBusy(true, "Switching to " + label + "… stopping the old input, waiting for the provider slot, then verifying HLS.");
+    setBusy(true, "Switching Slot " + String(slot).toUpperCase() + " to " + label + "…");
     try {
-      const result = await api("/operator/switch/" + encodeURIComponent(id), { method:"POST" });
-      activeStream = id;
+      const result = await api("/operator/switch/" + encodeURIComponent(id) + "?slot=" + encodeURIComponent(slot), { method:"POST" });
       switchMsg.textContent = result.alreadyActive
-        ? label + " was already active — nothing was restarted."
-        : label + " is live and verified.";
+        ? label + " was already live on Slot " + String(result.slot || slot).toUpperCase() + "."
+        : label + " is live and verified on Slot " + String(result.slot || slot).toUpperCase() + ".";
+      pendingChannel = null;
+      renderChooser();
       await refreshActive();
     } catch (error) {
       switchMsg.textContent = "Switch failed: " + error.message;
-      dot.className = "dot err";
     } finally {
       setBusy(false);
     }
   }
-  async function turnOff() {
+  async function turnOff(slot) {
     if (busy) return;
-    if (!pin.value.trim()) { authMsg.textContent = "Enter the operator PIN first."; pin.focus(); return; }
-    setBusy(true, "Turning V2 off…");
+    setBusy(true, "Turning Slot " + String(slot).toUpperCase() + " off…");
     try {
-      await api("/operator/off", { method:"POST" });
-      activeStream = null;
-      switchMsg.textContent = "V2 is off.";
+      await api("/operator/off?slot=" + encodeURIComponent(slot), { method:"POST" });
+      switchMsg.textContent = "Slot " + String(slot).toUpperCase() + " is off.";
       await refreshActive();
     } catch (error) {
       switchMsg.textContent = "Off failed: " + error.message;
-      dot.className = "dot err";
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function resumeAuto(slot) {
+    if (busy) return;
+    setBusy(true, "Resuming automation on Slot " + String(slot).toUpperCase() + "…");
+    try {
+      await api("/operator/auto?slot=" + encodeURIComponent(slot), { method:"POST" });
+      switchMsg.textContent = "Slot " + String(slot).toUpperCase() + " is back in auto mode.";
+      await refreshActive();
+    } catch (error) {
+      switchMsg.textContent = "Resume Auto failed: " + error.message;
     } finally {
       setBusy(false);
     }
@@ -205,8 +257,9 @@
     authMsg.textContent = value ? "Saved on this device." : "Saved PIN cleared.";
     refreshActive();
   });
-  off.addEventListener("click", turnOff);
-  renderButtons();
+
+  renderChannels();
+  renderSlots();
   refreshActive();
 })();
 </script>
