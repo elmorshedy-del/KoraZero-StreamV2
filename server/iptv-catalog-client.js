@@ -65,6 +65,9 @@ export function createIptvCatalogClient({
       activeConnections: nonNegativeInt(value?.activeConnections, 0),
       maxConnections: nonNegativeInt(value?.maxConnections, 0),
       allowedOutputFormats: Array.isArray(value?.allowedOutputFormats) ? [...value.allowedOutputFormats] : [],
+      accountFingerprint: /^[a-f0-9]{12}$/i.test(String(value?.accountFingerprint || ''))
+        ? String(value.accountFingerprint).toLowerCase()
+        : null,
     };
   }
 
