@@ -29,7 +29,7 @@ test('gateway contract defines KoraZero-owned HLS as the browser boundary', () =
   const contractPath = join(root, 'docs/gateway-contract.md');
   assert.equal(existsSync(contractPath), true, 'gateway contract must exist');
   const contract = readFileSync(contractPath, 'utf8');
-  assert.match(contract, /\/hls\/\{stream\}\/index\.m3u8/);
+  assert.match(contract, /\/hls\/iptv-<digits>\/index\.m3u8/);
   assert.match(contract, /browser.*never.*provider/i);
 });
 
