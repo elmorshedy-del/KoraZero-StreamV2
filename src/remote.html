@@ -51,11 +51,11 @@
   </section>
 
   <section class="card">
-    <div class="grid" id="grid"></div>
     <div class="chooser" id="chooser">
       <div class="chooser-title" id="chooserTitle"></div>
       <div class="chooser-buttons" id="chooserButtons"></div>
     </div>
+    <div class="grid" id="grid"></div>
   </section>
 
   <div class="footer">KoraZero V2 · operator-only · V1/Lab is not part of this control path</div>
@@ -188,8 +188,16 @@
     }
   }
   function chooseChannel(id, label) {
+    const slots = normalizedSlots();
+    if (slots.length === 1) {
+      pendingChannel = null;
+      renderChooser();
+      switchTo(id, label, slots[0].slot);
+      return;
+    }
     pendingChannel = { id, label };
     renderChooser();
+    chooser.scrollIntoView({ behavior: "smooth", block: "center" });
   }
   async function refreshActive() {
     if (!pin.value.trim()) {

@@ -59,6 +59,35 @@ async function withServer(fn) {
 
 const headers = { 'x-operator-pin': 'operator-pin' };
 
+
+const REMOTE_STREAM_IDS = [
+  '3645', '3644', '3653', '3652', '3651',
+  '241362', '241363', '241364',
+  '89778', '89779', '677', '244603',
+];
+
+test('every V2 Remote channel ID reaches the authenticated operator switch route', async () => {
+  await withServer(async ({ base, gateway }) => {
+    for (const streamId of REMOTE_STREAM_IDS) {
+      const response = await fetch(base + '/operator/switch/' + streamId + '?slot=a', {
+        method: 'POST',
+        headers,
+      });
+      assert.equal(response.status, 200, streamId);
+      const body = await response.json();
+      assert.equal(body.streamId, streamId);
+      assert.equal(body.verified, true);
+    }
+
+    const activations = gateway.calls.filter((call) => call[0] === 'activate');
+    assert.deepEqual(
+      activations.map((call) => call[1]),
+      REMOTE_STREAM_IDS,
+    );
+    assert.ok(activations.every((call) => call[2].slot === 'a' && call[2].manual === true));
+  });
+});
+
 test('operator switch passes explicit slot and manual override to gateway', async () => {
   await withServer(async ({ base, gateway }) => {
     const response = await fetch(base + '/operator/switch/3653?slot=b', { method: 'POST', headers });
