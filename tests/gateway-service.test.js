@@ -173,6 +173,57 @@ test('catalog playback switches one provider-backed Mist input at a time', async
 });
 
 
+
+test('all V2 Remote channels can replace each other sequentially on the single provider slot', async () => {
+  const streamIds = [
+    '3645', '3644', '3653', '3652', '3651',
+    '241362', '241363', '241364',
+    '89778', '89779', '677', '244603',
+  ];
+  const registry = createChannelRegistry({});
+  const mist = createMistFake();
+  const catalogClient = {
+    async list() {
+      return {
+        categories: [{ categoryId: '1', name: 'Remote', count: streamIds.length }],
+        channels: streamIds.map((streamId) => ({
+          streamId,
+          name: 'Remote ' + streamId,
+          categoryId: '1',
+          categoryName: 'Remote',
+        })),
+      };
+    },
+    async waitForFreeSlot() {
+      return { activeConnections: 0, maxConnections: 1 };
+    },
+    async stats() {
+      return { streams: {} };
+    },
+  };
+  const gateway = createGatewayService({
+    registry,
+    mist,
+    publicHlsBase: 'https://stream-v2.example/hls',
+    catalogClient,
+    relayBase: 'http://relay.internal:8080',
+    playbackProbeFn: async () => ({ ok: true, segmentBytes: 1880, totalMs: 5 }),
+  });
+
+  for (const streamId of streamIds) {
+    const result = await gateway.activate(streamId, { slot: 'a', manual: true });
+    assert.equal(result.channelId, 'iptv-' + streamId);
+    assert.equal(result.streamId, streamId);
+    assert.equal(result.verified, true);
+    assert.deepEqual([...mist.configured], ['iptv-' + streamId]);
+  }
+
+  const added = mist.calls.filter((call) => call[0] === 'addStream').map((call) => call[1]);
+  assert.deepEqual(added, streamIds.map((streamId) => 'iptv-' + streamId));
+  const nuked = mist.calls.filter((call) => call[0] === 'nukeStream').map((call) => call[1]);
+  assert.deepEqual(nuked, streamIds.slice(0, -1).map((streamId) => 'iptv-' + streamId));
+});
+
 test('catalog playback cleans stale dynamic Mist streams without arming the static supervisor', async () => {
   const registry = createChannelRegistry({});
   const mist = createMistFake();
