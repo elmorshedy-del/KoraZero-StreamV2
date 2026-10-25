@@ -1,0 +1,105 @@
+name: korazero-stream-v2
+
+services:
+  relay:
+    build:
+      context: ../..
+      dockerfile: infra/digitalocean/Dockerfile
+    command: ["node", "server/iptv-relay.js"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: "8080"
+    expose:
+      - "8080"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      v2:
+        aliases:
+          - v2-iptv-relay.railway.internal
+
+  mistserver:
+    image: ddvtech/mistserver:latest
+    restart: unless-stopped
+    shm_size: 4gb
+    expose:
+      - "8080"
+      - "4242"
+    healthcheck:
+      test: ["CMD", "MistUtilHealth"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - v2
+
+  control:
+    build:
+      context: ../..
+      dockerfile: infra/digitalocean/Dockerfile
+    command: ["node", "server/index.js"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: "8787"
+      V2_PUBLIC_HLS_BASE: "https://mist-v2.korazero.com/hls"
+      V2_MIST_API_ENDPOINT: "http://mistserver:4242/api2"
+      V2_IPTV_RELAY_BASE: "http://v2-iptv-relay.railway.internal:8080"
+    expose:
+      - "8787"
+    depends_on:
+      relay:
+        condition: service_healthy
+      mistserver:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8787/api/active').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 8s
+      retries: 8
+      start_period: 30s
+    networks:
+      - v2
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      control:
+        condition: service_healthy
+      mistserver:
+        condition: service_healthy
+    networks:
+      - v2
+
+networks:
+  v2:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
