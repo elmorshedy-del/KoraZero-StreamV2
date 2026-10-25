@@ -1,0 +1,102 @@
+name: korazero-v2
+x-node: &node
+  build:
+    context: ../..
+    dockerfile: infra/digitalocean/Dockerfile
+  restart: unless-stopped
+  init: true
+  networks: [v2]
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: "3"}
+services:
+  v2-iptv-relay:
+    <<: *node
+    command: [node, server/iptv-relay.js]
+    env_file:
+      - path: relay.env
+        format: raw
+    environment: {PORT: "8080"}
+    networks:
+      v2:
+        aliases: [v2-iptv-relay.railway.internal]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+  v2-iptv-relay-b:
+    <<: *node
+    profiles: [second-account]
+    command: [node, server/iptv-relay.js]
+    env_file:
+      - path: relay-b.env
+        required: false
+        format: raw
+    environment: {PORT: "8080"}
+    networks:
+      v2:
+        aliases: [v2-iptv-relay-b.railway.internal]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+  v2-mist:
+    image: ddvtech/mistserver:latest
+    command: ["--config", "/config/mistserver.conf", "--interface", "0.0.0.0", "--port", "4242"]
+    restart: unless-stopped
+    shm_size: 1gb
+    networks:
+      v2:
+        aliases: [v2-mist.railway.internal]
+    volumes:
+      - mist-data:/config
+    healthcheck:
+      test: [CMD, MistUtilHealth]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+  v2-control:
+    <<: *node
+    env_file:
+      - path: control.env
+        format: raw
+    environment:
+      PORT: "8787"
+      V2_MIST_API_ENDPOINT: http://v2-mist:4242/api2
+    depends_on:
+      v2-mist: {condition: service_started}
+      v2-iptv-relay: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8787/api/active').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      V2_PUBLIC_ADDRESS: ${V2_PUBLIC_ADDRESS:-http://134.209.36.189}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [v2]
+    depends_on:
+      v2-control: {condition: service_healthy}
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+networks:
+  v2: {}
+volumes:
+  mist-data: {}
+  caddy-data: {}
+  caddy-config: {}

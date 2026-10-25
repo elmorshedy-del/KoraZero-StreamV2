@@ -1,0 +1,19 @@
+{$V2_PUBLIC_ADDRESS:http://134.209.36.189} {
+	@hls path /hls/*
+	handle @hls {
+		header Access-Control-Allow-Origin "*"
+		header Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
+		header Access-Control-Allow-Headers "Range"
+		header Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges"
+		@preflight method OPTIONS
+		respond @preflight 204
+		reverse_proxy v2-mist:8080
+	}
+	@private path /internal /internal/* /api2 /api2/* /stats /account /catalog
+	handle @private {
+		respond 404
+	}
+	handle {
+		reverse_proxy v2-control:8787
+	}
+}
