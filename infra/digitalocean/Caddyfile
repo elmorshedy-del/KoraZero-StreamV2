@@ -1,0 +1,23 @@
+v2.korazero.com {
+    encode zstd gzip
+    reverse_proxy control:8787
+}
+
+mist-v2.korazero.com {
+    @preflight method OPTIONS
+    handle @preflight {
+        header Access-Control-Allow-Origin "*"
+        header Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
+        header Access-Control-Allow-Headers "Range, Content-Type"
+        header Access-Control-Max-Age "86400"
+        respond "" 204
+    }
+
+    header {
+        Access-Control-Allow-Origin "*"
+        Access-Control-Expose-Headers "Content-Length, Content-Range, Accept-Ranges"
+        Cache-Control "no-store"
+    }
+
+    reverse_proxy mistserver:8080
+}
